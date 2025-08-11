@@ -15,8 +15,15 @@
       "Bash(mv:*)",
       "Bash(pkill:*)",
       "Bash(/Applications/GIMP-3.0.4.app/Contents/MacOS/gimp:*)",
-      "Bash(ln:*)"
+      "Bash(ln:*)",
+      "WebFetch(domain:platform.openai.com)",
+      "WebFetch(domain:cookbook.openai.com)",
+      "Bash(grep:*)",
+      "Bash(sed:*)",
+      "Bash(true)"
     ],
-    "deny": []
+    "deny": [
+      "Read(file_path:*/config.json)"
+    ]
   }
 }

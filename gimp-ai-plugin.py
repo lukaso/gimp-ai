@@ -18,10 +18,11 @@ import tempfile
 import uuid
 
 gi.require_version('Gimp', '3.0')
+gi.require_version('GimpUi', '3.0')
 gi.require_version('Gegl', '0.4')
 gi.require_version('Gio', '2.0')
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gimp, GLib, Gegl, Gio, Gtk
+from gi.repository import Gimp, GimpUi, GLib, Gegl, Gio, Gtk
 
 class GimpAIPlugin(Gimp.PlugIn):
     """Simplified AI Plugin"""
@@ -71,32 +72,57 @@ class GimpAIPlugin(Gimp.PlugIn):
         return None
     
     def _show_prompt_dialog(self, title="AI Prompt", default_text=""):
-        """Show a GTK dialog to get user input for AI prompt"""
+        """Show a GIMP UI dialog to get user input for AI prompt"""
         try:
-            dialog = Gtk.Dialog(
-                title=title,
-                parent=None,
-                flags=Gtk.DialogFlags.MODAL | Gtk.DialogFlags.DESTROY_WITH_PARENT
-            )
+            # Initialize GIMP UI system (only if not already initialized)
+            if not hasattr(self, '_ui_initialized'):
+                GimpUi.init("gimp-ai-plugin")
+                self._ui_initialized = True
             
+            # Use proper GIMP dialog with header bar detection
+            use_header_bar = Gtk.Settings.get_default().get_property("gtk-dialogs-use-header")
+            dialog = GimpUi.Dialog(use_header_bar=use_header_bar, title=title)
+            
+            # Set up dialog properties  
+            dialog.set_default_size(400, 150)
+            dialog.set_resizable(False)
+            
+            # Add buttons using GIMP's standard approach
             dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
-            dialog.add_button("OK", Gtk.ResponseType.OK)
+            ok_button = dialog.add_button("OK", Gtk.ResponseType.OK)
+            ok_button.set_can_default(True)
+            ok_button.grab_default()
             
-            # Add content
+            # Add content with proper spacing
             content_area = dialog.get_content_area()
+            content_area.set_spacing(10)
+            content_area.set_margin_left(20)
+            content_area.set_margin_right(20) 
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
             
-            # Label
+            # Label - will automatically use theme colors
             label = Gtk.Label(label="Enter your AI prompt:")
-            content_area.pack_start(label, False, False, 10)
+            label.set_halign(Gtk.Align.START)
+            content_area.pack_start(label, False, False, 0)
             
-            # Text entry
+            # Text entry - will automatically use theme colors
             entry = Gtk.Entry()
             entry.set_text(default_text)
             entry.set_width_chars(50)
-            content_area.pack_start(entry, False, False, 10)
+            entry.set_placeholder_text("Describe what you want to generate...")
+            
+            # Make Enter key activate OK button
+            entry.set_activates_default(True)
+            
+            content_area.pack_start(entry, False, False, 0)
             
             # Show all widgets
             content_area.show_all()
+            
+            # Focus the text entry and select all text for easy editing
+            entry.grab_focus()
+            entry.select_region(0, -1)
             
             # Run dialog
             response = dialog.run()
@@ -202,14 +228,38 @@ class GimpAIPlugin(Gimp.PlugIn):
         try:
             print(f"DEBUG: Exporting image for AI, max_size={max_size}")
             
+            # Validate inputs
+            if not image:
+                return False, "Error: No image provided", None, 0, 0
+            
+            if max_size < 64 or max_size > 2048:
+                return False, f"Error: Invalid max_size {max_size} (must be 64-2048)", None, 0, 0
+            
+            # Check if image has valid dimensions
+            orig_width = image.get_width()
+            orig_height = image.get_height()
+            
+            if orig_width == 0 or orig_height == 0:
+                return False, f"Error: Invalid image dimensions {orig_width}x{orig_height}", None, 0, 0
+            
+            if orig_width > 4096 or orig_height > 4096:
+                return False, f"Error: Image too large {orig_width}x{orig_height} (max 4096x4096)", None, 0, 0
+            
+            print(f"DEBUG: Original image dimensions: {orig_width}x{orig_height}")
+            
             # Create a temporary image copy for export
             temp_image = image.duplicate()
+            if not temp_image:
+                return False, "Error: Failed to duplicate image", None, 0, 0
             
             # Get the active layer from the temp image
             layers = temp_image.get_layers()
             if not layers or len(layers) == 0:
-                return False, "No layers found in image", None, None, None
+                temp_image.delete()
+                return False, "Error: No layers found in image", None, 0, 0
+            
             temp_drawable = layers[0]  # Use first layer
+            
             
             # Get dimensions
             width = temp_image.get_width()
@@ -252,7 +302,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                         result = pdb_proc.run(pdb_config)
                         if result.index(0) == Gimp.PDBStatusType.SUCCESS:
                             export_success = True
-                            print("DEBUG: GIMP PNG export successful")
+                            print("DEBUG: GIMP PNG export successful - using GIMP export")
                         else:
                             print(f"DEBUG: GIMP PNG export failed: {result.index(0)}, trying fallback")
                             export_success = False
@@ -453,11 +503,11 @@ class GimpAIPlugin(Gimp.PlugIn):
         try:
             print(f"DEBUG: Creating black center circle mask {width}x{height}")
             
-            # Create IHDR chunk data (RGB format - no alpha)
+            # Create IHDR chunk data (L - grayscale format for OpenAI mask)
             ihdr_data = (
                 width.to_bytes(4, 'big') +
                 height.to_bytes(4, 'big') +  
-                b'\x08\x02\x00\x00\x00'  # 8-bit RGB
+                b'\x08\x00\x00\x00\x00'  # 8-bit grayscale (L format)
             )
             
             # Calculate IHDR CRC
@@ -474,11 +524,11 @@ class GimpAIPlugin(Gimp.PlugIn):
                 for x in range(width):
                     distance = ((x - center_x) ** 2 + (y - center_y) ** 2) ** 0.5
                     if distance <= radius:
-                        # Black RGB
-                        row += b'\x00\x00\x00'
+                        # Black grayscale (0 = inpaint this area)
+                        row += b'\x00'
                     else:
-                        # White RGB  
-                        row += b'\xff\xff\xff'
+                        # White grayscale (255 = keep original)
+                        row += b'\xff'
                 image_rows.append(row)
             
             image_data = b''.join(image_rows)
@@ -501,6 +551,93 @@ class GimpAIPlugin(Gimp.PlugIn):
         except Exception as e:
             print(f"DEBUG: Failed to create black mask: {e}")
             return self._create_simple_mask(width, height)
+
+    def _create_mask_from_selection(self, image, width, height):
+        """Create a black mask from GIMP selection"""
+        try:
+            print(f"DEBUG: Creating mask from selection {width}x{height}")
+            
+            # Check if there's a selection
+            selection_bounds = Gimp.Selection.bounds(image)
+            print(f"DEBUG: Selection bounds raw: {selection_bounds}")
+            
+            # Handle the named tuple return value - extract values by position
+            if len(selection_bounds) < 5:
+                print("DEBUG: No selection found, creating default circle mask")
+                return self._create_black_mask(width, height)
+            
+            # Extract from the returned tuple/named tuple
+            has_selection = selection_bounds[0]
+            x1 = selection_bounds[2] if len(selection_bounds) > 2 else 0
+            y1 = selection_bounds[3] if len(selection_bounds) > 3 else 0  
+            x2 = selection_bounds[4] if len(selection_bounds) > 4 else 0
+            y2 = selection_bounds[5] if len(selection_bounds) > 5 else 0
+            
+            if not has_selection:
+                print("DEBUG: No selection found, creating default circle mask")
+                return self._create_black_mask(width, height)
+            
+            print(f"DEBUG: Selection bounds: ({x1},{y1}) to ({x2},{y2})")
+            
+            # Get original image dimensions for scaling
+            orig_width = image.get_width()
+            orig_height = image.get_height()
+            
+            # Calculate scaling factors
+            scale_x = width / orig_width
+            scale_y = height / orig_height
+            
+            # Scale selection bounds to match mask dimensions
+            scaled_x1 = int(x1 * scale_x)
+            scaled_y1 = int(y1 * scale_y)
+            scaled_x2 = int(x2 * scale_x)
+            scaled_y2 = int(y2 * scale_y)
+            
+            print(f"DEBUG: Scaled selection: ({scaled_x1},{scaled_y1}) to ({scaled_x2},{scaled_y2})")
+            
+            # Create IHDR chunk data (L - grayscale format for OpenAI mask)
+            ihdr_data = (
+                width.to_bytes(4, 'big') +
+                height.to_bytes(4, 'big') +  
+                b'\x08\x00\x00\x00\x00'  # 8-bit grayscale (L format)
+            )
+            
+            import zlib
+            ihdr_crc = zlib.crc32(b'IHDR' + ihdr_data) & 0xffffffff
+            
+            # Create image data with black selection area
+            image_rows = []
+            for y in range(height):
+                row = b'\x00'  # Filter byte
+                for x in range(width):
+                    if scaled_x1 <= x <= scaled_x2 and scaled_y1 <= y <= scaled_y2:
+                        # Black grayscale (0 = inpaint this area) 
+                        row += b'\x00'
+                    else:
+                        # White grayscale (255 = keep original)
+                        row += b'\xff'
+                image_rows.append(row)
+            
+            image_data = b''.join(image_rows)
+            compressed_data = zlib.compress(image_data)
+            idat_crc = zlib.crc32(b'IDAT' + compressed_data) & 0xffffffff
+            
+            # Build PNG
+            png_data = (
+                b'\x89PNG\r\n\x1a\n' +
+                len(ihdr_data).to_bytes(4, 'big') + b'IHDR' +
+                ihdr_data + ihdr_crc.to_bytes(4, 'big') +
+                len(compressed_data).to_bytes(4, 'big') + b'IDAT' +
+                compressed_data + idat_crc.to_bytes(4, 'big') +
+                b'\x00\x00\x00\x00IEND\xae B`\x82'
+            )
+            
+            print(f"DEBUG: Created selection-based mask PNG: {len(png_data)} bytes")
+            return png_data
+            
+        except Exception as e:
+            print(f"DEBUG: Failed to create selection mask: {e}")
+            return self._create_black_mask(width, height)
     
     def _create_multipart_data(self, fields, files):
         """Create multipart form data for file upload"""
@@ -535,6 +672,16 @@ class GimpAIPlugin(Gimp.PlugIn):
         """Call OpenAI DALL-E API for inpainting"""
         try:
             print(f"DEBUG: Calling OpenAI API with prompt: {prompt}")
+            
+            # Validate inputs
+            if not prompt or not prompt.strip():
+                return False, "Error: Empty prompt provided", None
+            
+            if not image_data:
+                return False, "Error: No image data provided", None
+            
+            if not mask_data:
+                return False, "Error: No mask data provided", None
             
             if not api_key or api_key == "test-api-key":
                 print("DEBUG: No valid API key provided, returning mock response")
@@ -571,11 +718,31 @@ class GimpAIPlugin(Gimp.PlugIn):
                 debug_file.write(mask_data)
             print(f"DEBUG: Saved mask to {debug_mask_filename}")
             
-            # Additional debugging: check if our mask actually has transparency
-            print(f"DEBUG: Mask analysis - size: {len(mask_data)} bytes")
-            # Check if mask contains alpha channel data (RGBA = 4 bytes per pixel)
-            if len(mask_data) > 100:  # Basic PNG validation
-                print("DEBUG: Mask appears to be a valid PNG")
+            # Analyze both image formats by examining PNG headers
+            if image_bytes.startswith(b'\x89PNG'):
+                # Check color type in IHDR chunk (byte 25)
+                if len(image_bytes) > 25:
+                    color_type = image_bytes[25]
+                    format_names = {0: "L", 2: "RGB", 3: "P", 4: "LA", 6: "RGBA"}
+                    format_name = format_names.get(color_type, f"Unknown({color_type})")
+                    print(f"DEBUG: Input image format: {format_name} (color type {color_type})")
+                else:
+                    print("DEBUG: Input image PNG header too short")
+            else:
+                print("DEBUG: Input image is not PNG format!")
+                
+            if mask_data.startswith(b'\x89PNG'):
+                # Check mask format
+                if len(mask_data) > 25:
+                    color_type = mask_data[25]
+                    format_names = {0: "L", 2: "RGB", 3: "P", 4: "LA", 6: "RGBA"}
+                    format_name = format_names.get(color_type, f"Unknown({color_type})")
+                    print(f"DEBUG: Mask format: {format_name} (color type {color_type})")
+                    print(f"DEBUG: Mask size: {len(mask_data)} bytes")
+                else:
+                    print("DEBUG: Mask PNG header too short")
+            else:
+                print("DEBUG: Mask is not PNG format!")
             
             files = {
                 'image': ('image.png', image_bytes, 'image/png'),
@@ -616,8 +783,15 @@ class GimpAIPlugin(Gimp.PlugIn):
     def _download_and_import_result(self, image, api_response):
         """Download AI result image and import it as a new layer"""
         try:
+            # Validate inputs
+            if not image:
+                return False, "Error: No GIMP image provided"
+            
             if not api_response or 'data' not in api_response:
                 return False, "Invalid API response - no data"
+            
+            if not api_response['data'] or len(api_response['data']) == 0:
+                return False, "Invalid API response - empty data array"
             
             result_data = api_response['data'][0]
             if 'url' not in result_data:
@@ -837,15 +1011,14 @@ class GimpAIPlugin(Gimp.PlugIn):
         print(f"DEBUG: Image export succeeded: {message}")
         
         # Step 4: Create mask with matching dimensions (MUST match image exactly per OpenAI docs)
-        # TODO: Generate from GIMP selection
         if prompt.lower().startswith("test"):
             # For test mode, create a completely transparent mask (inpaint everything)
             print(f"DEBUG: Creating completely transparent test mask {final_width}x{final_height}")
             mask_data = self._create_transparent_mask(final_width, final_height)
         else:
-            print(f"DEBUG: Creating circle mask {final_width}x{final_height} to match resized image")
-            # Use black mask format (OpenAI expects black pixels for inpaint areas)
-            mask_data = self._create_black_mask(final_width, final_height)
+            # Try to create mask from selection first, fall back to circle
+            print(f"DEBUG: Creating mask from selection or default circle {final_width}x{final_height}")
+            mask_data = self._create_mask_from_selection(image, final_width, final_height)
         
         # Step 5: Call AI API (or use test mode)
         if prompt.lower().startswith("test"):
