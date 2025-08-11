@@ -1,0 +1,23 @@
+{
+    "api_provider": "openai",
+    "openai": {
+        "api_key": "your-openai-api-key-here",
+        "model": "gpt-4-vision-preview",
+        "endpoint": "https://api.openai.com/v1"
+    },
+    "anthropic": {
+        "api_key": "your-anthropic-api-key-here", 
+        "model": "claude-3-sonnet-20240229",
+        "endpoint": "https://api.anthropic.com"
+    },
+    "custom": {
+        "api_key": "your-custom-api-key-here",
+        "model": "your-model-name",
+        "endpoint": "https://your-custom-endpoint.com"
+    },
+    "settings": {
+        "image_quality": 0.85,
+        "max_image_size": 1024,
+        "timeout": 30
+    }
+}

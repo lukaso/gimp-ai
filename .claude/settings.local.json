@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:developer.gimp.org)",
+      "WebFetch(domain:www.gimp.org)",
+      "WebFetch(domain:testing.docs.gimp.org)",
+      "Bash(python3:*)",
+      "WebFetch(domain:discourse.gnome.org)",
+      "WebFetch(domain:www.lune.dev)",
+      "WebFetch(domain:gimpchat.com)"
+    ],
+    "deny": []
+  }
+}
