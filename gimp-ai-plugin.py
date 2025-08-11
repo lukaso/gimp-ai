@@ -844,12 +844,8 @@ class GimpAIPlugin(Gimp.PlugIn):
             mask_data = self._create_transparent_mask(final_width, final_height)
         else:
             print(f"DEBUG: Creating circle mask {final_width}x{final_height} to match resized image")
-            # Try a black mask instead of transparent for debugging
-            if prompt.lower() == "black":
-                print("DEBUG: Using BLACK mask instead of transparent for testing")
-                mask_data = self._create_black_mask(final_width, final_height)
-            else:
-                mask_data = self._create_simple_mask(final_width, final_height)
+            # Use black mask format (OpenAI expects black pixels for inpaint areas)
+            mask_data = self._create_black_mask(final_width, final_height)
         
         # Step 5: Call AI API (or use test mode)
         if prompt.lower().startswith("test"):
