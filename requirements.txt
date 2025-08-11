@@ -1,5 +1,20 @@
-requests>=2.28.0
-pillow>=9.0.0
-numpy>=1.21.0
-openai>=1.0.0
-anthropic>=0.7.0
+# No external dependencies required!
+# This plugin uses only Python standard library modules that come with GIMP.
+# 
+# The following are used (all built-in):
+# - urllib.request (HTTP requests)
+# - urllib.parse (URL encoding) 
+# - urllib.error (HTTP error handling)
+# - json (JSON parsing)
+# - base64 (image encoding)
+# - tempfile (temporary files)
+# - ssl (secure connections)
+# - time (delays and timeouts)
+# - email.mime (multipart form data)
+#
+# Optional (for advanced users only):
+# If you want to extend functionality with additional HTTP features:
+# requests>=2.28.0
+# 
+# If you want additional image processing capabilities:
+# pillow>=9.0.0

@@ -62,22 +62,21 @@ def install_plugin():
     return True
 
 def check_dependencies():
-    """Check if required Python packages are installed"""
-    required_packages = ['requests', 'pillow']
-    missing_packages = []
+    """Check if standard library modules are available (they should be)"""
+    standard_modules = ['urllib.request', 'json', 'base64', 'tempfile', 'ssl', 'time']
+    missing_modules = []
     
-    for package in required_packages:
+    for module in standard_modules:
         try:
-            __import__(package)
+            __import__(module)
         except ImportError:
-            missing_packages.append(package)
+            missing_modules.append(module)
     
-    if missing_packages:
-        print("Missing required packages:")
-        for package in missing_packages:
-            print(f"  - {package}")
-        print("\nInstall them with:")
-        print(f"  pip install {' '.join(missing_packages)}")
+    if missing_modules:
+        print("ERROR: Missing standard library modules:")
+        for module in missing_modules:
+            print(f"  - {module}")
+        print("\nThis indicates a problem with your Python installation.")
         return False
     
     return True
@@ -87,12 +86,12 @@ def main():
     print("=" * 40)
     
     # Check dependencies
-    print("Checking Python dependencies...")
+    print("Checking Python standard library...")
     if not check_dependencies():
-        print("\nPlease install the required packages and run this script again.")
+        print("\nThere appears to be an issue with your Python installation.")
         return 1
     
-    print("Dependencies OK")
+    print("Standard library modules OK")
     
     # Install plugin
     print("\nInstalling plugin...")
@@ -102,6 +101,7 @@ def main():
         print("1. Restart GIMP if it's currently running")
         print("2. Configure your API keys via: Filters > AI > AI Plugin Settings")
         print("3. Start using AI features via the Filters > AI menu")
+        print("\n✨ No additional dependencies needed - uses only built-in Python modules!")
         return 0
     else:
         print("\nInstallation failed!")

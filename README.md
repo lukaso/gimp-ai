@@ -12,17 +12,17 @@ A Python plugin for GIMP 3.0+ that integrates with Large Language Models (LLMs) 
 ## Requirements
 
 - GIMP 3.0.4 or 3.1.2+
-- Python 3.8+
 - Internet connection for LLM API calls
+- **No external Python dependencies!** Uses only built-in modules
 
 ## Installation
 
-1. **Install Python dependencies:**
+1. **Run the installation script:**
    ```bash
-   pip install -r requirements.txt
+   python3 install_simple.py
    ```
 
-2. **Copy plugin to GIMP plugins directory:**
+2. **Alternative: Manual installation - Copy plugin to GIMP plugins directory:**
    
    On macOS:
    ```bash
@@ -47,7 +47,7 @@ A Python plugin for GIMP 3.0+ that integrates with Large Language Models (LLMs) 
 
 1. Open GIMP
 2. Go to `Filters > AI > AI Plugin Settings`
-3. Configure your API key and endpoint for your chosen LLM provider
+3. Configure your API key for your chosen LLM provider (OpenAI or Anthropic)
 
 ## Usage
 

@@ -7,7 +7,15 @@
       "Bash(python3:*)",
       "WebFetch(domain:discourse.gnome.org)",
       "WebFetch(domain:www.lune.dev)",
-      "WebFetch(domain:gimpchat.com)"
+      "WebFetch(domain:gimpchat.com)",
+      "Bash(chmod:*)",
+      "Bash(cp:*)",
+      "Bash(mkdir:*)",
+      "WebFetch(domain:gitlab.gnome.org)",
+      "Bash(mv:*)",
+      "Bash(pkill:*)",
+      "Bash(/Applications/GIMP-3.0.4.app/Contents/MacOS/gimp:*)",
+      "Bash(ln:*)"
     ],
     "deny": []
   }

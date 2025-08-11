@@ -126,13 +126,11 @@ def main():
     
     print("\n📋 Next steps:")
     print("1. 🔄 Restart GIMP if it's currently running")
-    print("2. 🔧 Install Python dependencies in your system:")
-    print("   pip3 install requests pillow")
-    print("3. 🔑 Configure API keys via: Filters > AI > AI Plugin Settings")
-    print("4. 🖼️  Test with a small image selection")
+    print("2. 🔑 Configure API keys via: Filters > AI > AI Plugin Settings")
+    print("3. 🖼️  Test with a small image selection")
     
-    print("\n💡 Note: The plugin will show helpful error messages")
-    print("   if dependencies are missing when you try to use it.")
+    print("\n✨ No additional dependencies required!")
+    print("   This plugin uses only built-in Python modules.")
     
     return 0
 
