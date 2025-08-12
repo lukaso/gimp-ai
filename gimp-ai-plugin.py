@@ -24,6 +24,14 @@ gi.require_version("Gio", "2.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gimp, GimpUi, GLib, Gegl, Gio, Gtk
 
+# Import pure coordinate transformation functions
+from coordinate_utils import (
+    calculate_context_extraction,
+    calculate_mask_coordinates,
+    calculate_placement_coordinates,
+    validate_context_info,
+)
+
 
 class GimpAIPlugin(Gimp.PlugIn):
     """Simplified AI Plugin"""
@@ -152,60 +160,6 @@ class GimpAIPlugin(Gimp.PlugIn):
             # Fallback to default prompt if dialog fails
             return default_text if default_text else "fill this area naturally"
 
-    def _test_http_request(self):
-        """Test basic HTTP functionality"""
-        try:
-            # Test different endpoints and approaches
-            test_configs = [
-                ("http://httpbin.org/get", "HTTP httpbin.org", None),
-                (
-                    "https://api.github.com",
-                    "HTTPS GitHub API (unverified)",
-                    "unverified",
-                ),
-                (
-                    "https://httpbin.org/get",
-                    "HTTPS httpbin.org (unverified)",
-                    "unverified",
-                ),
-                ("http://example.com", "HTTP example.com", None),
-            ]
-
-            for url, test_name, ssl_mode in test_configs:
-                try:
-                    print(f"DEBUG: Trying {test_name}...")
-                    req = urllib.request.Request(url)
-                    req.add_header("User-Agent", "GIMP-AI-Plugin/1.0")
-
-                    if url.startswith("https"):
-                        if ssl_mode == "unverified":
-                            ctx = ssl.create_default_context()
-                            ctx.check_hostname = False
-                            ctx.verify_mode = ssl.CERT_NONE
-                        else:
-                            ctx = ssl.create_default_context()
-                    else:
-                        ctx = None
-
-                    with urllib.request.urlopen(
-                        req, context=ctx, timeout=15
-                    ) as response:
-                        status_code = response.getcode()
-                        data = response.read().decode("utf-8")[:200]  # First 200 chars
-                        return (
-                            True,
-                            f"{test_name} successful! Status: {status_code}, Data preview: {data[:50]}...",
-                        )
-
-                except Exception as e:
-                    print(f"DEBUG: {test_name} failed: {e}")
-                    continue
-
-            return False, "All network tests failed - check internet connection"
-
-        except Exception as e:
-            return False, f"Network test error: {str(e)}"
-
     def _test_image_access(self, image, drawables):
         """Test basic image data access"""
         try:
@@ -254,68 +208,82 @@ class GimpAIPlugin(Gimp.PlugIn):
         """Extract true square context region without distortion"""
         try:
             print("DEBUG: Extracting TRUE SQUARE context region for AI")
-            
+
             # Get parameters for the context square
-            ctx_x1, ctx_y1, ctx_size, _ = context_info['context_square']
-            target_size = context_info['target_size']
+            ctx_x1, ctx_y1, ctx_size, _ = context_info["context_square"]
+            target_size = context_info["target_size"]
             orig_width = image.get_width()
             orig_height = image.get_height()
-            
-            print(f"DEBUG: Context square: ({ctx_x1},{ctx_y1}) to ({ctx_x1+ctx_size},{ctx_y1+ctx_size}) size={ctx_size}")
+
+            print(
+                f"DEBUG: Context square: ({ctx_x1},{ctx_y1}) to ({ctx_x1+ctx_size},{ctx_y1+ctx_size}) size={ctx_size}"
+            )
             print(f"DEBUG: Original image: {orig_width}x{orig_height}")
             print(f"DEBUG: Target size: {target_size}x{target_size}")
-            
+
             # Create a new square canvas
             square_image = Gimp.Image.new(ctx_size, ctx_size, image.get_base_type())
             if not square_image:
                 return False, "Failed to create square canvas", None
-            
+
             # Calculate what part of the original image intersects with our context square
             intersect_x1 = max(0, ctx_x1)
-            intersect_y1 = max(0, ctx_y1)  
+            intersect_y1 = max(0, ctx_y1)
             intersect_x2 = min(orig_width, ctx_x1 + ctx_size)
             intersect_y2 = min(orig_height, ctx_y1 + ctx_size)
-            
+
             intersect_width = intersect_x2 - intersect_x1
             intersect_height = intersect_y2 - intersect_y1
-            
-            print(f"DEBUG: Image intersection: ({intersect_x1},{intersect_y1}) to ({intersect_x2},{intersect_y2})")
+
+            print(
+                f"DEBUG: Image intersection: ({intersect_x1},{intersect_y1}) to ({intersect_x2},{intersect_y2})"
+            )
             print(f"DEBUG: Intersection size: {intersect_width}x{intersect_height}")
-            
+
             if intersect_width > 0 and intersect_height > 0:
                 # Create a temporary image with just the intersecting region
                 temp_image = image.duplicate()
-                temp_image.crop(intersect_width, intersect_height, intersect_x1, intersect_y1)
-                
+                temp_image.crop(
+                    intersect_width, intersect_height, intersect_x1, intersect_y1
+                )
+
                 # Create a layer from this region
-                merged_layer = temp_image.merge_visible_layers(Gimp.MergeType.CLIP_TO_IMAGE)
+                merged_layer = temp_image.merge_visible_layers(
+                    Gimp.MergeType.CLIP_TO_IMAGE
+                )
                 if not merged_layer:
                     temp_image.delete()
                     square_image.delete()
                     return False, "Failed to merge layers", None
-                
+
                 # Copy this layer to our square canvas at the correct position
                 layer_copy = Gimp.Layer.new_from_drawable(merged_layer, square_image)
                 square_image.insert_layer(layer_copy, None, 0)
-                
+
                 # Position the layer correctly within the square
                 # The layer should be at the same relative position as in the context square
                 paste_x = intersect_x1 - ctx_x1  # Offset within the square
                 paste_y = intersect_y1 - ctx_y1  # Offset within the square
                 layer_copy.set_offsets(paste_x, paste_y)
-                
-                print(f"DEBUG: Placed image content at offset ({paste_x},{paste_y}) within square")
-                
+
+                print(
+                    f"DEBUG: Placed image content at offset ({paste_x},{paste_y}) within square"
+                )
+
                 # Clean up temp image
                 temp_image.delete()
             else:
-                print("DEBUG: No intersection with original image - creating empty square")
-            
-            # Scale to target size for OpenAI  
+                print(
+                    "DEBUG: No intersection with original image - creating empty square"
+                )
+
+            # Scale to target size for OpenAI
             if ctx_size != target_size:
                 square_image.scale(target_size, target_size)
-                print(f"DEBUG: Scaled square from {ctx_size}x{ctx_size} to {target_size}x{target_size}")
-            
+                print(
+                    f"DEBUG: Scaled square from {ctx_size}x{ctx_size} to {target_size}x{target_size}"
+                )
+
             # Export to PNG
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
                 temp_filename = temp_file.name
@@ -323,7 +291,7 @@ class GimpAIPlugin(Gimp.PlugIn):
             try:
                 # Export using GIMP's PNG export
                 file = Gio.File.new_for_path(temp_filename)
-                
+
                 pdb_proc = Gimp.get_pdb().lookup_procedure("file-png-export")
                 pdb_config = pdb_proc.create_config()
                 pdb_config.set_property("run-mode", Gimp.RunMode.NONINTERACTIVE)
@@ -336,7 +304,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                     print(f"DEBUG: PNG export failed: {result.index(0)}")
                     square_image.delete()
                     return False, "PNG export failed", None
-                
+
                 # Read the exported file and encode to base64
                 with open(temp_filename, "rb") as f:
                     png_data = f.read()
@@ -357,7 +325,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                     os.unlink(temp_filename)
                 square_image.delete()
                 return False, f"Export failed: {str(e)}", None
-                
+
         except Exception as e:
             print(f"DEBUG: Context extraction failed: {e}")
             return False, f"Context extraction error: {str(e)}", None
@@ -745,149 +713,116 @@ class GimpAIPlugin(Gimp.PlugIn):
         """Calculate smart context extraction area around selection"""
         try:
             print("DEBUG: Calculating smart context extraction")
-            
+
             # Get image dimensions
             img_width = image.get_width()
             img_height = image.get_height()
             print(f"DEBUG: Original image size: {img_width}x{img_height}")
-            
+
             # Check for selection
             selection_bounds = Gimp.Selection.bounds(image)
             print(f"DEBUG: Selection bounds raw: {selection_bounds}")
-            
+
             if len(selection_bounds) < 5 or not selection_bounds[0]:
                 print("DEBUG: No selection found, using center area")
-                # Default to center area if no selection
-                size = min(img_width, img_height, 512)
-                x = (img_width - size) // 2
-                y = (img_height - size) // 2
-                return {
-                    'selection_bounds': (x, y, x + size, y + size),
-                    'context_square': (x, y, size, size),
-                    'extract_region': (x, y, size, size),
-                    'padding': (0, 0, 0, 0),  # left, top, right, bottom
-                    'has_selection': False
-                }
-            
+                # Use pure function with no selection
+                return calculate_context_extraction(
+                    img_width, img_height, 0, 0, 0, 0, has_selection=False
+                )
+
             # Extract selection bounds
             has_selection = selection_bounds[0]
             sel_x1 = selection_bounds[2] if len(selection_bounds) > 2 else 0
             sel_y1 = selection_bounds[3] if len(selection_bounds) > 3 else 0
             sel_x2 = selection_bounds[4] if len(selection_bounds) > 4 else 0
             sel_y2 = selection_bounds[5] if len(selection_bounds) > 5 else 0
-            
+
             sel_width = sel_x2 - sel_x1
             sel_height = sel_y2 - sel_y1
-            print(f"DEBUG: Selection: ({sel_x1},{sel_y1}) to ({sel_x2},{sel_y2}), size: {sel_width}x{sel_height}")
-            
-            # Calculate context padding (30-50% of selection size, min 32px, max 200px)
-            context_padding = max(32, min(200, int(max(sel_width, sel_height) * 0.4)))
-            print(f"DEBUG: Context padding: {context_padding}px")
-            
-            # Calculate desired context square
-            ctx_x1 = sel_x1 - context_padding
-            ctx_y1 = sel_y1 - context_padding
-            ctx_x2 = sel_x2 + context_padding
-            ctx_y2 = sel_y2 + context_padding
-            
-            ctx_width = ctx_x2 - ctx_x1
-            ctx_height = ctx_y2 - ctx_y1
-            
-            # Make it square by expanding the smaller dimension
-            square_size = max(ctx_width, ctx_height)
-            
-            # Center the square around the selection
-            sel_center_x = (sel_x1 + sel_x2) // 2
-            sel_center_y = (sel_y1 + sel_y2) // 2
-            
-            square_x1 = sel_center_x - square_size // 2
-            square_y1 = sel_center_y - square_size // 2
-            square_x2 = square_x1 + square_size
-            square_y2 = square_y1 + square_size
-            
-            print(f"DEBUG: Desired context square: ({square_x1},{square_y1}) to ({square_x2},{square_y2}), size: {square_size}x{square_size}")
-            
-            # Calculate padding needed if square extends beyond image boundaries
-            pad_left = max(0, -square_x1)
-            pad_top = max(0, -square_y1)
-            pad_right = max(0, square_x2 - img_width)
-            pad_bottom = max(0, square_y2 - img_height)
-            
-            # Adjust extraction region to stay within image bounds
-            extract_x1 = max(0, square_x1)
-            extract_y1 = max(0, square_y1)
-            extract_x2 = min(img_width, square_x2)
-            extract_y2 = min(img_height, square_y2)
-            extract_width = extract_x2 - extract_x1
-            extract_height = extract_y2 - extract_y1
-            
-            print(f"DEBUG: Extract region: ({extract_x1},{extract_y1}) to ({extract_x2},{extract_y2}), size: {extract_width}x{extract_height}")
-            print(f"DEBUG: Padding needed: left={pad_left}, top={pad_top}, right={pad_right}, bottom={pad_bottom}")
-            
-            # Optimize square size for OpenAI (prefer 512, 768, or 1024)
-            if square_size <= 512:
-                target_size = 512
-            elif square_size <= 768:
-                target_size = 768
-            else:
-                target_size = 1024
-                
-            print(f"DEBUG: Target size for OpenAI: {target_size}x{target_size}")
-            
-            return {
-                'selection_bounds': (sel_x1, sel_y1, sel_x2, sel_y2),
-                'context_square': (square_x1, square_y1, square_size, square_size),
-                'extract_region': (extract_x1, extract_y1, extract_width, extract_height),
-                'padding': (pad_left, pad_top, pad_right, pad_bottom),
-                'target_size': target_size,
-                'has_selection': True
-            }
-            
+            print(
+                f"DEBUG: Selection: ({sel_x1},{sel_y1}) to ({sel_x2},{sel_y2}), size: {sel_width}x{sel_height}"
+            )
+
+            # Use pure function for calculation
+            context_info = calculate_context_extraction(
+                img_width,
+                img_height,
+                sel_x1,
+                sel_y1,
+                sel_x2,
+                sel_y2,
+                has_selection=True,
+            )
+
+            # Validate the result
+            is_valid, error_msg = validate_context_info(context_info)
+            if not is_valid:
+                print(f"DEBUG: Context validation failed: {error_msg}")
+                # Fallback to center extraction
+                return calculate_context_extraction(
+                    img_width, img_height, 0, 0, 0, 0, has_selection=False
+                )
+
+            # Add debug output for the calculated values
+            square_x1, square_y1, square_size, _ = context_info["context_square"]
+            print(
+                f"DEBUG: Context padding: {max(32, min(200, int(max(sel_width, sel_height) * 0.4)))}px"
+            )
+            print(
+                f"DEBUG: Desired context square: ({square_x1},{square_y1}) to ({square_x1+square_size},{square_y1+square_size}), size: {square_size}x{square_size}"
+            )
+
+            extract_x1, extract_y1, extract_width, extract_height = context_info[
+                "extract_region"
+            ]
+            print(
+                f"DEBUG: Extract region: ({extract_x1},{extract_y1}) to ({extract_x1+extract_width},{extract_y1+extract_height}), size: {extract_width}x{extract_height}"
+            )
+
+            pad_left, pad_top, pad_right, pad_bottom = context_info["padding"]
+            print(
+                f"DEBUG: Padding needed: left={pad_left}, top={pad_top}, right={pad_right}, bottom={pad_bottom}"
+            )
+            print(
+                f"DEBUG: Target size for OpenAI: {context_info['target_size']}x{context_info['target_size']}"
+            )
+
+            return context_info
+
         except Exception as e:
             print(f"DEBUG: Context calculation failed: {e}")
             # Fallback to simple center extraction
-            size = min(img_width, img_height, 512)
-            x = (img_width - size) // 2
-            y = (img_height - size) // 2
-            return {
-                'selection_bounds': (x, y, x + size, y + size),
-                'context_square': (x, y, size, size),
-                'extract_region': (x, y, size, size),
-                'padding': (0, 0, 0, 0),
-                'target_size': 512,
-                'has_selection': False
-            }
+            return calculate_context_extraction(
+                img_width, img_height, 0, 0, 0, 0, has_selection=False
+            )
 
     def _create_context_mask(self, context_info, target_size):
         """Create mask for context extraction that respects selection boundaries"""
         try:
             print(f"DEBUG: Creating context mask {target_size}x{target_size}")
-            
-            if not context_info['has_selection']:
+
+            if not context_info["has_selection"]:
                 print("DEBUG: No selection, creating center circle mask")
                 return self._create_black_mask(target_size, target_size)
-            
-            # Get context square info
-            sel_x1, sel_y1, sel_x2, sel_y2 = context_info['selection_bounds']
-            ctx_x1, ctx_y1, ctx_size, _ = context_info['context_square']
-            
-            # Calculate selection position within the context square
-            sel_in_ctx_x1 = sel_x1 - ctx_x1
-            sel_in_ctx_y1 = sel_y1 - ctx_y1
-            sel_in_ctx_x2 = sel_x2 - ctx_x1
-            sel_in_ctx_y2 = sel_y2 - ctx_y1
-            
-            print(f"DEBUG: Selection within context: ({sel_in_ctx_x1},{sel_in_ctx_y1}) to ({sel_in_ctx_x2},{sel_in_ctx_y2})")
-            
-            # Scale to target size
-            scale = target_size / ctx_size
-            mask_sel_x1 = int(sel_in_ctx_x1 * scale)
-            mask_sel_y1 = int(sel_in_ctx_y1 * scale)
-            mask_sel_x2 = int(sel_in_ctx_x2 * scale)
-            mask_sel_y2 = int(sel_in_ctx_y2 * scale)
-            
-            print(f"DEBUG: Mask selection area: ({mask_sel_x1},{mask_sel_y1}) to ({mask_sel_x2},{mask_sel_y2})")
-            
+
+            # Use pure coordinate function for mask calculation
+            mask_coords = calculate_mask_coordinates(context_info, target_size)
+
+            if mask_coords["mask_type"] == "circle":
+                print("DEBUG: No selection, creating center circle mask")
+                return self._create_black_mask(target_size, target_size)
+
+            # Extract calculated coordinates
+            mask_sel_x1 = mask_coords["x1"]
+            mask_sel_y1 = mask_coords["y1"]
+            mask_sel_x2 = mask_coords["x2"]
+            mask_sel_y2 = mask_coords["y2"]
+
+            print(
+                f"DEBUG: Selection within context (scaled): ({mask_sel_x1},{mask_sel_y1}) to ({mask_sel_x2},{mask_sel_y2})"
+            )
+            print(f"DEBUG: Scale factor: {mask_coords['scale_factor']}")
+
             # Create IHDR chunk data (L - grayscale format for OpenAI mask)
             ihdr_data = (
                 target_size.to_bytes(4, "big")
@@ -896,6 +831,7 @@ class GimpAIPlugin(Gimp.PlugIn):
             )
 
             import zlib
+
             ihdr_crc = zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF
 
             # Create image data with black selection area, white context
@@ -903,7 +839,10 @@ class GimpAIPlugin(Gimp.PlugIn):
             for y in range(target_size):
                 row = b"\x00"  # Filter byte
                 for x in range(target_size):
-                    if mask_sel_x1 <= x <= mask_sel_x2 and mask_sel_y1 <= y <= mask_sel_y2:
+                    if (
+                        mask_sel_x1 <= x <= mask_sel_x2
+                        and mask_sel_y1 <= y <= mask_sel_y2
+                    ):
                         # Black grayscale (0 = inpaint this area)
                         row += b"\x00"
                     else:
@@ -931,7 +870,7 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             print(f"DEBUG: Created context mask PNG: {len(png_data)} bytes")
             return png_data
-            
+
         except Exception as e:
             print(f"DEBUG: Context mask creation failed: {e}")
             return self._create_black_mask(target_size, target_size)
@@ -1195,7 +1134,7 @@ class GimpAIPlugin(Gimp.PlugIn):
         """Download AI result and composite it back to original image with proper masking"""
         try:
             print("DEBUG: Downloading and compositing AI result")
-            
+
             # Validate inputs
             if not image:
                 return False, "Error: No GIMP image provided"
@@ -1255,7 +1194,9 @@ class GimpAIPlugin(Gimp.PlugIn):
                 Gimp.displays_flush()
 
                 file = Gio.File.new_for_path(temp_filename)
-                ai_result_img = Gimp.file_load(run_mode=Gimp.RunMode.NONINTERACTIVE, file=file)
+                ai_result_img = Gimp.file_load(
+                    run_mode=Gimp.RunMode.NONINTERACTIVE, file=file
+                )
 
                 if not ai_result_img:
                     return False, "Failed to load AI result image"
@@ -1266,19 +1207,23 @@ class GimpAIPlugin(Gimp.PlugIn):
                     return False, "No layers found in AI result"
 
                 ai_layer = ai_layers[0]
-                print(f"DEBUG: AI result dimensions: {ai_layer.get_width()}x{ai_layer.get_height()}")
+                print(
+                    f"DEBUG: AI result dimensions: {ai_layer.get_width()}x{ai_layer.get_height()}"
+                )
 
                 # Get original image dimensions
                 orig_width = image.get_width()
                 orig_height = image.get_height()
 
                 # Get context info for compositing
-                sel_x1, sel_y1, sel_x2, sel_y2 = context_info['selection_bounds']
-                ctx_x1, ctx_y1, ctx_size, _ = context_info['context_square']
-                target_size = context_info['target_size']
+                sel_x1, sel_y1, sel_x2, sel_y2 = context_info["selection_bounds"]
+                ctx_x1, ctx_y1, ctx_size, _ = context_info["context_square"]
+                target_size = context_info["target_size"]
 
                 print(f"DEBUG: Original image: {orig_width}x{orig_height}")
-                print(f"DEBUG: Selection bounds: ({sel_x1},{sel_y1}) to ({sel_x2},{sel_y2})")
+                print(
+                    f"DEBUG: Selection bounds: ({sel_x1},{sel_y1}) to ({sel_x2},{sel_y2})"
+                )
                 print(f"DEBUG: Context square: ({ctx_x1},{ctx_y1}), size {ctx_size}")
 
                 # Create new layer in original image for the composited result
@@ -1296,107 +1241,126 @@ class GimpAIPlugin(Gimp.PlugIn):
                 image.insert_layer(result_layer, None, 0)
 
                 # Scale AI result back to context size if needed
-                if ai_layer.get_width() != ctx_size or ai_layer.get_height() != ctx_size:
+                if (
+                    ai_layer.get_width() != ctx_size
+                    or ai_layer.get_height() != ctx_size
+                ):
                     # Create a scaled version
                     scaled_img = ai_result_img.duplicate()
                     scaled_img.scale(ctx_size, ctx_size)
                     scaled_layers = scaled_img.get_layers()
                     if scaled_layers:
                         ai_layer = scaled_layers[0]
-                    print(f"DEBUG: Scaled AI result to context size: {ctx_size}x{ctx_size}")
+                    print(
+                        f"DEBUG: Scaled AI result to context size: {ctx_size}x{ctx_size}"
+                    )
 
-                # SIMPLIFIED COORDINATE CALCULATION FOR TRUE SQUARE
-                # Since we now work with true squares throughout the pipeline:
-                # 1. AI result is a true ctx_size x ctx_size square 
-                # 2. It represents the context square at position (ctx_x1, ctx_y1)
-                # 3. We simply place it at that exact position and let GIMP handle clipping
-                
-                paste_x = ctx_x1  # Exact position where context square belongs
-                paste_y = ctx_y1
-                
-                print(f"DEBUG: SIMPLIFIED POSITIONING:")
-                print(f"DEBUG: AI result is {ctx_size}x{ctx_size} square")
-                print(f"DEBUG: Placing at context square position: ({paste_x},{paste_y})")
+                # USE PURE COORDINATE FUNCTION FOR PLACEMENT
+                placement = calculate_placement_coordinates(context_info)
+                paste_x = placement["paste_x"]
+                paste_y = placement["paste_y"]
+                result_width = placement["result_width"]
+                result_height = placement["result_height"]
+
+                print(f"DEBUG: USING PURE PLACEMENT FUNCTION:")
+                print(f"DEBUG: AI result is {result_width}x{result_height} square")
+                print(f"DEBUG: Placing at calculated position: ({paste_x},{paste_y})")
                 print(f"DEBUG: GIMP will automatically clip to image bounds")
-                
+
                 # Copy the AI result content using simplified Gegl nodes
                 from gi.repository import Gegl
 
-                print(f"DEBUG: Placing {ctx_size}x{ctx_size} AI result at ({paste_x},{paste_y})")
-                
+                print(
+                    f"DEBUG: Placing {ctx_size}x{ctx_size} AI result at ({paste_x},{paste_y})"
+                )
+
                 # Get buffers
                 buffer = result_layer.get_buffer()
                 shadow_buffer = result_layer.get_shadow_buffer()
                 ai_buffer = ai_layer.get_buffer()
-                
-                # Create simplified Gegl processing graph  
+
+                # Create simplified Gegl processing graph
                 graph = Gegl.Node()
-                
+
                 # Source: AI result square
                 ai_input = graph.create_child("gegl:buffer-source")
                 ai_input.set_property("buffer", ai_buffer)
-                
+
                 # Translate to context square position (GIMP will handle clipping)
                 translate = graph.create_child("gegl:translate")
                 translate.set_property("x", float(paste_x))
                 translate.set_property("y", float(paste_y))
-                
+
                 # Write to shadow buffer
                 output = graph.create_child("gegl:write-buffer")
                 output.set_property("buffer", shadow_buffer)
-                
+
                 # Link simple chain: source -> translate -> output
                 ai_input.link(translate)
                 translate.link(output)
-                
+
                 # Process the graph
                 try:
                     output.process()
-                    
+
                     # Flush and merge shadow buffer
                     shadow_buffer.flush()
                     result_layer.merge_shadow(True)
-                    result_layer.update(paste_x, paste_y, ctx_size, ctx_size)
-                    
-                    print(f"DEBUG: Successfully composited AI result using simplified Gegl graph")
+                    result_layer.update(paste_x, paste_y, result_width, result_height)
+
+                    print(
+                        f"DEBUG: Successfully composited AI result using simplified Gegl graph"
+                    )
                 except Exception as e:
                     print(f"DEBUG: Gegl processing failed: {e}")
                     raise
 
                 # Create a layer mask to show only the selection area
-                if context_info['has_selection']:
-                    print("DEBUG: Creating coordinate-aware selection mask for result layer")
-                    
+                if context_info["has_selection"]:
+                    print(
+                        "DEBUG: Creating coordinate-aware selection mask for result layer"
+                    )
+
                     # The issue with AddMaskType.SELECTION is that it uses current selection coordinates
                     # but our content may be positioned differently due to coordinate transformations
                     # Instead, we'll create a mask programmatically that aligns with actual content position
-                    
+
                     # Create black mask (everything hidden initially)
                     mask = result_layer.create_mask(Gimp.AddMaskType.BLACK)
                     result_layer.add_mask(mask)
-                    
+
                     # Now we need to make the mask white exactly where the original selection was
                     # Since our content is positioned correctly, the mask should match original selection coords
                     # The selection coordinates haven't changed - they're still at (sel_x1,sel_y1) to (sel_x2,sel_y2)
-                    
+
                     # Get current selection and copy it to mask
                     # First, save current selection
                     selection_exists = not Gimp.Selection.is_empty(image)
-                    
+
                     if selection_exists:
-                        # Fill the mask white in the selection area 
+                        # Fill the mask white in the selection area
                         # Use the original selection coordinates since that's where we want visibility
                         mask.edit_fill(Gimp.FillType.WHITE)
-                        print(f"DEBUG: Applied selection-shaped mask using original selection")
+                        print(
+                            f"DEBUG: Applied selection-shaped mask using original selection"
+                        )
                     else:
                         print("DEBUG: Warning: No selection found for masking")
 
-                # VALIDATION CHECKS  
+                # VALIDATION CHECKS
                 print(f"DEBUG: === SIMPLIFIED ALIGNMENT VALIDATION ===")
-                print(f"DEBUG: Context square positioned at: ({paste_x},{paste_y}) with size {ctx_size}x{ctx_size}")
-                print(f"DEBUG: Original selection was: ({sel_x1},{sel_y1}) to ({sel_x2},{sel_y2})")
-                print(f"DEBUG: Since we work with true squares, alignment should be perfect")
-                print(f"DEBUG: Selection coordinates within context square: ({sel_x1-paste_x},{sel_y1-paste_y}) to ({sel_x2-paste_x},{sel_y2-paste_y})")
+                print(
+                    f"DEBUG: Context square positioned at: ({paste_x},{paste_y}) with size {result_width}x{result_height}"
+                )
+                print(
+                    f"DEBUG: Original selection was: ({sel_x1},{sel_y1}) to ({sel_x2},{sel_y2})"
+                )
+                print(
+                    f"DEBUG: Since we work with true squares, alignment should be perfect"
+                )
+                print(
+                    f"DEBUG: Selection coordinates within context square: ({sel_x1-paste_x},{sel_y1-paste_y}) to ({sel_x2-paste_x},{sel_y2-paste_y})"
+                )
 
                 # Clean up temporary image
                 ai_result_img.delete()
@@ -1406,9 +1370,14 @@ class GimpAIPlugin(Gimp.PlugIn):
                 Gimp.displays_flush()
 
                 layer_count = len(image.get_layers())
-                print(f"DEBUG: Successfully composited AI result. Total layers: {layer_count}")
+                print(
+                    f"DEBUG: Successfully composited AI result. Total layers: {layer_count}"
+                )
 
-                return True, f"AI result composited as masked layer: '{result_layer.get_name()}' (total layers: {layer_count})"
+                return (
+                    True,
+                    f"AI result composited as masked layer: '{result_layer.get_name()}' (total layers: {layer_count})",
+                )
 
             except Exception as e:
                 print(f"DEBUG: Compositing failed: {e}")
@@ -1658,7 +1627,26 @@ class GimpAIPlugin(Gimp.PlugIn):
     def run_inpaint(self, procedure, run_mode, image, drawables, config, run_data):
         print("DEBUG: AI Inpaint Selection called!")
 
-        # Step 1: Get user prompt FIRST
+        # Step 1: Check for active selection FIRST
+        print("DEBUG: Checking for active selection...")
+        selection_bounds = Gimp.Selection.bounds(image)
+        has_selection = len(selection_bounds) >= 5 and selection_bounds[0]
+
+        if not has_selection:
+            print("DEBUG: No selection found - showing error message")
+            Gimp.message(
+                "❌ No Selection Found!\n\n"
+                "AI Inpainting requires an active selection to define the area to modify.\n\n"
+                "Please:\n"
+                "1. Use selection tools (Rectangle, Ellipse, Free Select, etc.)\n"
+                "2. Select the area you want to inpaint\n"
+                "3. Run AI Inpaint Selection again"
+            )
+            return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
+
+        print("DEBUG: Selection found - proceeding with inpainting")
+
+        # Step 2: Get user prompt
         print("DEBUG: About to show prompt dialog...")
         prompt = self._show_prompt_dialog(
             "AI Inpaint",
@@ -1677,7 +1665,7 @@ class GimpAIPlugin(Gimp.PlugIn):
         Gimp.progress_update(0.1)  # 10% - Started
         Gimp.displays_flush()  # Force UI update
 
-        # Step 2: Get API key
+        # Step 3: Get API key
         api_key = self._get_api_key()
         if not api_key:
             Gimp.message(
@@ -1690,14 +1678,14 @@ class GimpAIPlugin(Gimp.PlugIn):
         Gimp.progress_update(0.3)  # 30% - Got API key
         Gimp.displays_flush()  # Force UI update
 
-        # Step 3: Calculate smart context extraction
+        # Step 4: Calculate smart context extraction
         print("DEBUG: Calculating context extraction...")
         context_info = self._calculate_context_extraction(image)
-        
+
         Gimp.progress_update(0.4)  # 40% - Context calculated
         Gimp.displays_flush()  # Force UI update
 
-        # Step 4: Extract context region with padding
+        # Step 5: Extract context region with padding
         print("DEBUG: Extracting context region...")
         success, message, image_data = self._extract_context_region(image, context_info)
 
@@ -1711,14 +1699,14 @@ class GimpAIPlugin(Gimp.PlugIn):
         Gimp.progress_update(0.5)  # 50% - Context extracted
         Gimp.displays_flush()  # Force UI update
 
-        # Step 5: Create smart mask that respects selection within context
+        # Step 6: Create smart mask that respects selection within context
         print("DEBUG: Creating context-aware mask...")
-        mask_data = self._create_context_mask(context_info, context_info['target_size'])
+        mask_data = self._create_context_mask(context_info, context_info["target_size"])
 
         Gimp.progress_update(0.6)  # 60% - Mask created
         Gimp.displays_flush()  # Force UI update
 
-        # Step 6: Call AI API with context and mask
+        # Step 7: Call AI API with context and mask
         api_success, api_message, api_response = self._call_openai_inpaint(
             image_data, mask_data, prompt, api_key
         )
@@ -1726,7 +1714,7 @@ class GimpAIPlugin(Gimp.PlugIn):
         if api_success:
             print(f"DEBUG: AI API succeeded: {api_message}")
 
-            # Step 7: Download and composite result with proper masking
+            # Step 8: Download and composite result with proper masking
             import_success, import_message = self._download_and_composite_result(
                 image, api_response, context_info
             )

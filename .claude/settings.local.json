@@ -20,7 +20,8 @@
       "WebFetch(domain:cookbook.openai.com)",
       "Bash(grep:*)",
       "Bash(sed:*)",
-      "Bash(true)"
+      "Bash(true)",
+      "Bash(python tests:*)"
     ],
     "deny": [
       "Read(file_path:*/config.json)"
