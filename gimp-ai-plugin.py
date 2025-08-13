@@ -49,17 +49,33 @@ class GimpAIPlugin(Gimp.PlugIn):
             gimp_config_path = os.path.join(plugin_dir, "gimp-ai-plugin", "config.json")
         except:
             gimp_config_path = None
-            
+
         config_paths = []
+
+        # Try GIMP preferences directory first (where we want to save)
+        try:
+            gimp_user_dir = Gimp.directory()
+            gimp_prefs_path = os.path.join(
+                gimp_user_dir, "gimp-ai-plugin", "config.json"
+            )
+            config_paths.append(gimp_prefs_path)
+        except:
+            pass
+
+        # Then try user config directory (migration path)
+        config_paths.append(os.path.expanduser("~/.config/gimp-ai/config.json"))
+
+        # Then try GIMP plugin directory
         if gimp_config_path:
             config_paths.append(gimp_config_path)
-        
+
         # Fallback paths for backward compatibility
-        config_paths.extend([
-            os.path.join(os.path.dirname(__file__), "config.json"),
-            os.path.expanduser("~/.config/gimp-ai/config.json"),
-            os.path.expanduser("~/.gimp-ai-config.json"),
-        ])
+        config_paths.extend(
+            [
+                os.path.join(os.path.dirname(__file__), "config.json"),
+                os.path.expanduser("~/.gimp-ai-config.json"),
+            ]
+        )
 
         for config_path in config_paths:
             try:
@@ -82,39 +98,51 @@ class GimpAIPlugin(Gimp.PlugIn):
         }
 
     def _save_config(self):
-        """Save configuration using GIMP API location"""
+        """Save configuration to GIMP preferences directory"""
         try:
-            plugin_dir = Gimp.PlugIn.directory()
-            config_dir = os.path.join(plugin_dir, "gimp-ai-plugin")
+            # Use GIMP's user directory (where preferences are stored)
+            gimp_user_dir = Gimp.directory()
+            config_dir = os.path.join(gimp_user_dir, "gimp-ai-plugin")
             config_path = os.path.join(config_dir, "config.json")
-            
+
             # Create directory if it doesn't exist
             os.makedirs(config_dir, exist_ok=True)
-            
+
             with open(config_path, "w") as f:
                 json.dump(self.config, f, indent=4)
-            print(f"DEBUG: Saved config to {config_path}")
+            print(f"DEBUG: Saved config to GIMP preferences: {config_path}")
             return True
         except Exception as e:
-            print(f"DEBUG: Failed to save config: {e}")
-            return False
+            print(f"DEBUG: Failed to save config to GIMP preferences: {e}")
+            # Fallback to user config directory
+            try:
+                config_dir = os.path.expanduser("~/.config/gimp-ai")
+                config_path = os.path.join(config_dir, "config.json")
+                os.makedirs(config_dir, exist_ok=True)
+                with open(config_path, "w") as f:
+                    json.dump(self.config, f, indent=4)
+                print(f"DEBUG: Saved config to fallback location: {config_path}")
+                return True
+            except Exception as e2:
+                print(f"DEBUG: All config save attempts failed: {e2}")
+                return False
 
     def _add_to_prompt_history(self, prompt):
         """Add prompt to history, keeping last 10 unique prompts"""
         if not prompt.strip():
             return
-            
+
         # Remove if already exists to avoid duplicates
         history = self.config.get("prompt_history", [])
         if prompt in history:
             history.remove(prompt)
-        
+
         # Add to beginning
         history.insert(0, prompt)
-        
+
         # Keep only last 10
         history = history[:10]
-        
+
         self.config["prompt_history"] = history
         self.config["last_prompt"] = prompt
         self._save_config()
@@ -174,8 +202,10 @@ class GimpAIPlugin(Gimp.PlugIn):
             dialog.set_default_size(600, 300)
             dialog.set_resizable(True)
 
-            # Add buttons using GIMP's standard approach  
-            dialog.add_button("Settings", Gtk.ResponseType.HELP)  # Use HELP for Settings
+            # Add buttons using GIMP's standard approach
+            dialog.add_button(
+                "Settings", Gtk.ResponseType.HELP
+            )  # Use HELP for Settings
             dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
             ok_button = dialog.add_button("OK", Gtk.ResponseType.OK)
             ok_button.set_can_default(True)
@@ -201,7 +231,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 history_label = Gtk.Label(label="Recent prompts:")
                 history_label.set_halign(Gtk.Align.START)
                 content_area.pack_start(history_label, False, False, 0)
-                
+
                 history_combo = Gtk.ComboBoxText()
                 history_combo.append_text("Select from recent prompts...")
                 for prompt in history:
@@ -213,38 +243,51 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             # Multiline text view for prompts
             scrolled_window = Gtk.ScrolledWindow()
-            scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            scrolled_window.set_policy(
+                Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC
+            )
             scrolled_window.set_size_request(560, 150)
-            
+
             text_view = Gtk.TextView()
             text_view.set_wrap_mode(Gtk.WrapMode.WORD)
             text_view.set_border_width(8)
-            
+
             # Set default text
             text_buffer = text_view.get_buffer()
             text_buffer.set_text(default_text)
-            
+
             scrolled_window.add(text_view)
             content_area.pack_start(scrolled_window, True, True, 0)
-            
-            # Connect Ctrl+Enter to activate OK button
+
+            # Connect Enter to activate OK button, Shift+Enter for new line
             def on_key_press(widget, event):
-                if (event.state & Gdk.ModifierType.CONTROL_MASK and 
-                    event.keyval == Gdk.KEY_Return):
-                    dialog.response(Gtk.ResponseType.OK)
-                    return True
+                if event.keyval == Gdk.KEY_Return:
+                    # Shift+Enter: Allow new line (default behavior)
+                    if event.state & Gdk.ModifierType.SHIFT_MASK:
+                        return False  # Let default behavior handle it
+                    # Plain Enter or Ctrl+Enter: Submit dialog
+                    else:
+                        dialog.response(Gtk.ResponseType.OK)
+                        return True
                 return False
+
             text_view.connect("key-press-event", on_key_press)
-            
+
             # Connect history selection to populate text view
             if history_combo:
+
                 def on_history_changed(combo):
                     active = combo.get_active()
                     if active > 0:  # Skip the placeholder item
-                        selected_prompt = history[active - 1]  # -1 because of placeholder
+                        selected_prompt = history[
+                            active - 1
+                        ]  # -1 because of placeholder
                         text_buffer.set_text(selected_prompt)
                         text_view.grab_focus()
-                        text_buffer.select_range(text_buffer.get_start_iter(), text_buffer.get_end_iter())
+                        text_buffer.select_range(
+                            text_buffer.get_start_iter(), text_buffer.get_end_iter()
+                        )
+
                 history_combo.connect("changed", on_history_changed)
 
             # Show all widgets
@@ -252,7 +295,9 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             # Focus the text view and select all text for easy editing
             text_view.grab_focus()
-            text_buffer.select_range(text_buffer.get_start_iter(), text_buffer.get_end_iter())
+            text_buffer.select_range(
+                text_buffer.get_start_iter(), text_buffer.get_end_iter()
+            )
 
             # Run dialog in loop to handle Settings button
             print("DEBUG: About to call dialog.run()...")
@@ -292,7 +337,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 parent=parent_dialog,
                 flags=Gtk.DialogFlags.MODAL,
             )
-            
+
             # Set up dialog properties
             dialog.set_default_size(500, 400)
             dialog.set_resizable(True)
@@ -939,11 +984,15 @@ class GimpAIPlugin(Gimp.PlugIn):
             print(f"DEBUG: Failed to create black mask: {e}")
             return self._create_simple_mask(width, height)
 
-    def _create_white_mask_with_black_selection(self, width, height, sel_x1, sel_y1, sel_x2, sel_y2):
+    def _create_white_mask_with_black_selection(
+        self, width, height, sel_x1, sel_y1, sel_x2, sel_y2
+    ):
         """Create a white mask with black selection rectangle"""
         try:
-            print(f"DEBUG: Creating white mask {width}x{height} with black selection ({sel_x1},{sel_y1})-({sel_x2},{sel_y2})")
-            
+            print(
+                f"DEBUG: Creating white mask {width}x{height} with black selection ({sel_x1},{sel_y1})-({sel_x2},{sel_y2})"
+            )
+
             # Create IHDR chunk data (L - grayscale format for OpenAI mask)
             ihdr_data = (
                 width.to_bytes(4, "big")
@@ -952,8 +1001,9 @@ class GimpAIPlugin(Gimp.PlugIn):
             )
             # Calculate IHDR CRC
             import zlib
+
             ihdr_crc = zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF
-            
+
             # Create image data - white background with black selection area
             image_rows = []
             for y in range(height):
@@ -965,23 +1015,31 @@ class GimpAIPlugin(Gimp.PlugIn):
                     else:
                         row += b"\xff"  # White for non-selection area
                 image_rows.append(row)
-            
+
             # Compress image data
             image_data = b"".join(image_rows)
             compressed_data = zlib.compress(image_data)
             idat_crc = zlib.crc32(b"IDAT" + compressed_data) & 0xFFFFFFFF
-            
+
             # Construct PNG
             png_data = (
                 b"\x89PNG\r\n\x1a\n"  # PNG signature
-                + len(ihdr_data).to_bytes(4, "big") + b"IHDR" + ihdr_data + ihdr_crc.to_bytes(4, "big")
-                + len(compressed_data).to_bytes(4, "big") + b"IDAT" + compressed_data + idat_crc.to_bytes(4, "big")
+                + len(ihdr_data).to_bytes(4, "big")
+                + b"IHDR"
+                + ihdr_data
+                + ihdr_crc.to_bytes(4, "big")
+                + len(compressed_data).to_bytes(4, "big")
+                + b"IDAT"
+                + compressed_data
+                + idat_crc.to_bytes(4, "big")
                 + b"\x00\x00\x00\x00IEND\xaeB`\x82"  # IEND chunk
             )
-            
-            print(f"DEBUG: Created white mask with black selection: {len(png_data)} bytes")
+
+            print(
+                f"DEBUG: Created white mask with black selection: {len(png_data)} bytes"
+            )
             return png_data
-            
+
         except Exception as e:
             print(f"DEBUG: White mask creation failed: {e}")
             return self._create_black_mask(width, height)
@@ -990,40 +1048,69 @@ class GimpAIPlugin(Gimp.PlugIn):
         """Calculate context extraction for full image (GPT-Image-1 mode)"""
         try:
             print("DEBUG: Calculating full image context extraction")
-            
+
             # Get full image dimensions
             orig_width = image.get_width()
             orig_height = image.get_height()
             print(f"DEBUG: Original full image size: {orig_width}x{orig_height}")
-            
+
             # Use full image bounds as "selection"
             full_x1, full_y1 = 0, 0
             full_x2, full_y2 = orig_width, orig_height
-            
-            print(f"DEBUG: Full image bounds: ({full_x1},{full_y1}) to ({full_x2},{full_y2})")
-            
+
+            print(
+                f"DEBUG: Full image bounds: ({full_x1},{full_y1}) to ({full_x2},{full_y2})"
+            )
+
             # For full image mode, we want to scale the entire image to fit in a square
             # The square size should be 1024x1024 (OpenAI's max)
             target_size = 1024
-            
+
             print(f"DEBUG: Target square size: {target_size}x{target_size}")
-            
+
             # For full image, the context should cover the entire original image
             # The extraction code will scale it down to fit the target_size
             ctx_x1 = 0
-            ctx_y1 = 0 
-            ctx_size = max(orig_width, orig_height)  # Large enough to cover entire image
-            
-            print(f"DEBUG: Context square: ({ctx_x1},{ctx_y1}) size {ctx_size}x{ctx_size}")
-            
+            ctx_y1 = 0
+            ctx_size = max(
+                orig_width, orig_height
+            )  # Large enough to cover entire image
+
+            print(
+                f"DEBUG: Context square: ({ctx_x1},{ctx_y1}) size {ctx_size}x{ctx_size}"
+            )
+
+            # Check if there's actually a selection - if not, use full image for transformation
+            selection_bounds = Gimp.Selection.bounds(image)
+            has_real_selection = (
+                selection_bounds[0] if len(selection_bounds) > 0 else False
+            )
+
+            if has_real_selection:
+                # Use actual selection bounds
+                sel_bounds = (
+                    selection_bounds[2],
+                    selection_bounds[3],
+                    selection_bounds[4],
+                    selection_bounds[5],
+                )
+            else:
+                # No selection - transform entire image ("Image to Image" mode)
+                sel_bounds = (full_x1, full_y1, full_x2, full_y2)
+
             return {
-                'context_square': (ctx_x1, ctx_y1, ctx_size, 0),  # Match existing structure
-                'target_size': target_size,
-                'selection_bounds': (full_x1, full_y1, full_x2, full_y2),  # Full image as "selection"
-                'has_selection': True,  # Treat full image as having selection
-                'original_bounds': (full_x1, full_y1, full_x2, full_y2),
+                "context_square": (
+                    ctx_x1,
+                    ctx_y1,
+                    ctx_size,
+                    0,
+                ),  # Match existing structure
+                "target_size": target_size,
+                "selection_bounds": sel_bounds,
+                "has_selection": has_real_selection,  # True selection state
+                "original_bounds": (full_x1, full_y1, full_x2, full_y2),
             }
-            
+
         except Exception as e:
             print(f"DEBUG: Failed to calculate full image context extraction: {e}")
             return None
@@ -1119,77 +1206,80 @@ class GimpAIPlugin(Gimp.PlugIn):
         """Prepare full image for GPT-Image-1 processing"""
         try:
             print("DEBUG: Preparing full image for transformation")
-            
+
             width = image.get_width()
             height = image.get_height()
-            
+
             print(f"DEBUG: Original image size: {width}x{height}")
-            
+
             # Scale to fit in 1024x1024 preserving aspect ratio
             max_size = 1024
             scale = min(max_size / width, max_size / height)
             target_width = int(width * scale)
             target_height = int(height * scale)
-            
+
             print(f"DEBUG: Scale factor: {scale:.3f}")
             print(f"DEBUG: Target size: {target_width}x{target_height}")
-            
+
             # Create simplified context_info for compatibility
             context_info = {
-                'mode': 'full_image',
-                'original_size': (width, height),
-                'scaled_size': (target_width, target_height),
-                'scale_factor': scale,
-                'target_size': max_size,
-                'has_selection': True  # Always true for this mode
+                "mode": "full_image",
+                "original_size": (width, height),
+                "scaled_size": (target_width, target_height),
+                "scale_factor": scale,
+                "target_size": max_size,
+                "has_selection": True,  # Always true for this mode
             }
-            
+
             return context_info
-            
+
         except Exception as e:
             print(f"DEBUG: Full image preparation failed: {e}")
             # Fallback to 1024x1024
             return {
-                'mode': 'full_image',
-                'original_size': (1024, 1024),
-                'scaled_size': (1024, 1024), 
-                'scale_factor': 1.0,
-                'target_size': 1024,
-                'has_selection': True
+                "mode": "full_image",
+                "original_size": (1024, 1024),
+                "scaled_size": (1024, 1024),
+                "scale_factor": 1.0,
+                "target_size": 1024,
+                "has_selection": True,
             }
 
     def _extract_full_image(self, image, context_info):
         """Extract and scale the full image for GPT-Image-1"""
         try:
-            target_width, target_height = context_info['scaled_size']
-            print(f"DEBUG: Extracting full image, scaling to {target_width}x{target_height}")
-            
+            target_width, target_height = context_info["scaled_size"]
+            print(
+                f"DEBUG: Extracting full image, scaling to {target_width}x{target_height}"
+            )
+
             # Create a copy of the image
             original_width = image.get_width()
             original_height = image.get_height()
-            
+
             # Create image copy for processing
             temp_image = image.duplicate()
-            
+
             # Flatten the image to get composite result
             if len(temp_image.get_layers()) > 1:
                 temp_image.flatten()
-            
+
             # Get the flattened layer
             layer = temp_image.get_layers()[0]
-            
+
             # Scale the layer to target size
             layer.scale(target_width, target_height, False)
-            
+
             # Scale the image canvas to match
             temp_image.scale(target_width, target_height)
-            
+
             # Export to PNG in memory
             print("DEBUG: Exporting full image as PNG...")
             import tempfile
+
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
                 temp_path = temp_file.name
-            
+
             # Use GIMP's export function like the existing code
             file = Gio.File.new_for_path(temp_path)
             pdb_proc = Gimp.get_pdb().lookup_procedure("file-png-export")
@@ -1199,26 +1289,33 @@ class GimpAIPlugin(Gimp.PlugIn):
             pdb_config.set_property("file", file)
             pdb_config.set_property("options", None)
             result = pdb_proc.run(pdb_config)
-            
+
             if result.index(0) != Gimp.PDBStatusType.SUCCESS:
                 temp_image.delete()
                 raise Exception("Failed to export full image")
-            
+
             # Read the exported PNG
             with open(temp_path, "rb") as f:
                 image_bytes = f.read()
-            
+
             # Clean up
             os.unlink(temp_path)
             temp_image.delete()
-            
+
             # Convert to base64 for API
             import base64
-            image_data = base64.b64encode(image_bytes).decode('utf-8')
-            
-            print(f"DEBUG: Full image extracted: {len(image_bytes)} bytes, base64 length: {len(image_data)}")
-            return True, f"Extracted full image: {len(image_bytes)} bytes as PNG, base64 length: {len(image_data)}", image_data
-            
+
+            image_data = base64.b64encode(image_bytes).decode("utf-8")
+
+            print(
+                f"DEBUG: Full image extracted: {len(image_bytes)} bytes, base64 length: {len(image_data)}"
+            )
+            return (
+                True,
+                f"Extracted full image: {len(image_bytes)} bytes as PNG, base64 length: {len(image_data)}",
+                image_data,
+            )
+
         except Exception as e:
             print(f"DEBUG: Full image extraction failed: {e}")
             return False, f"Full image extraction failed: {str(e)}", None
@@ -1227,34 +1324,46 @@ class GimpAIPlugin(Gimp.PlugIn):
         """Create mask for full image with selection area marked for transformation"""
         try:
             print("DEBUG: Creating full image mask with selection area")
-            
-            target_width, target_height = context_info['scaled_size']
-            scale_factor = context_info['scale_factor']
-            
+
+            target_width, target_height = context_info["scaled_size"]
+            scale_factor = context_info["scale_factor"]
+
             # Scale selection bounds to match scaled image
             sel_x1, sel_y1, sel_x2, sel_y2 = selection_bounds
             scaled_sel_x1 = int(sel_x1 * scale_factor)
-            scaled_sel_y1 = int(sel_y1 * scale_factor) 
+            scaled_sel_y1 = int(sel_y1 * scale_factor)
             scaled_sel_x2 = int(sel_x2 * scale_factor)
             scaled_sel_y2 = int(sel_y2 * scale_factor)
-            
-            print(f"DEBUG: Scaled selection: ({scaled_sel_x1},{scaled_sel_y1}) to ({scaled_sel_x2},{scaled_sel_y2})")
-            
+
+            print(
+                f"DEBUG: Scaled selection: ({scaled_sel_x1},{scaled_sel_y1}) to ({scaled_sel_x2},{scaled_sel_y2})"
+            )
+
             # Create mask image
-            mask_image = Gimp.Image.new(target_width, target_height, Gimp.ImageType.GRAY)
-            mask_layer = Gimp.Layer.new(mask_image, "mask", target_width, target_height, 
-                                      Gimp.ImageType.GRAY, 100.0, Gimp.LayerMode.NORMAL)
+            mask_image = Gimp.Image.new(
+                target_width, target_height, Gimp.ImageType.GRAY
+            )
+            mask_layer = Gimp.Layer.new(
+                mask_image,
+                "mask",
+                target_width,
+                target_height,
+                Gimp.ImageType.GRAY,
+                100.0,
+                Gimp.LayerMode.NORMAL,
+            )
             mask_image.insert_layer(mask_layer, None, 0)
-            
+
             # Fill with white (preserve areas)
             from gi.repository import Gegl
+
             white_color = Gegl.Color.new("white")
             mask_layer.get_shadow_buffer().clear(white_color)
-            
+
             # Create black rectangle for selection area (transform area)
             black_color = Gegl.Color.new("black")
             mask_buffer = mask_layer.get_shadow_buffer()
-            
+
             # Fill selection rectangle with black
             width = scaled_sel_x2 - scaled_sel_x1
             height = scaled_sel_y2 - scaled_sel_y1
@@ -1262,23 +1371,24 @@ class GimpAIPlugin(Gimp.PlugIn):
                 # Simple rectangle mask for now
                 rect = Gegl.Rectangle.new(scaled_sel_x1, scaled_sel_y1, width, height)
                 mask_buffer.set_color(rect, black_color)
-            
+
             # Merge shadow buffer with base layer
             mask_layer.merge_shadow(True)
             mask_layer.update(0, 0, target_width, target_height)
-            
+
             # Export mask as PNG
             import tempfile
+
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
                 temp_path = temp_file.name
-                
+
             # Use GIMP's export function
             export_options = Gimp.ProcedureConfig.new_from_procedure(
                 Gimp.get_pdb().lookup_procedure("file-png-export")
             )
             export_options.set_property("interlace", False)
             export_options.set_property("compression", 9)
-            
+
             result = Gimp.get_pdb().run_procedure(
                 "file-png-export",
                 [
@@ -1288,85 +1398,104 @@ class GimpAIPlugin(Gimp.PlugIn):
                     export_options,
                 ],
             )
-            
+
             if not result.get_status() == Gimp.PDBStatusType.SUCCESS:
                 raise Exception("Failed to export mask image")
-            
+
             # Read the PNG data
             with open(temp_path, "rb") as f:
                 mask_data = f.read()
-            
+
             # Clean up
             os.unlink(temp_path)
             mask_image.delete()
-            
+
             print(f"DEBUG: Created full image mask: {len(mask_data)} bytes")
             return mask_data
-            
+
         except Exception as e:
             print(f"DEBUG: Full image mask creation failed: {e}")
             # Return a simple white mask as fallback
             import io
             from PIL import Image
-            mask_img = Image.new('L', context_info['scaled_size'], 255)  # White mask
+
+            mask_img = Image.new("L", context_info["scaled_size"], 255)  # White mask
             mask_bytes = io.BytesIO()
-            mask_img.save(mask_bytes, format='PNG')
+            mask_img.save(mask_bytes, format="PNG")
             return mask_bytes.getvalue()
 
     def _create_context_mask(self, image, context_info, target_size):
         """Create mask from actual selection shape using pixel-by-pixel copying"""
         try:
-            print(f"DEBUG: Creating pixel-perfect selection mask {target_size}x{target_size}")
+            print(
+                f"DEBUG: Creating pixel-perfect selection mask {target_size}x{target_size}"
+            )
 
             if not context_info["has_selection"]:
-                raise Exception("No selection available - selection-shaped mask requires an active selection")
+                raise Exception(
+                    "No selection available - selection-shaped mask requires an active selection"
+                )
 
             # Get context square info
             ctx_x1, ctx_y1, ctx_size, _ = context_info["context_square"]
             print(f"DEBUG: Context square: ({ctx_x1},{ctx_y1}) size {ctx_size}")
-            
+
             # Step 1: Save original selection as channel to preserve its exact shape
             selection_channel = Gimp.Selection.save(image)
             if not selection_channel:
                 raise Exception("Failed to save selection as channel")
             print("DEBUG: Saved selection as channel for pixel copying")
-            
+
             # Step 2: Create context-sized mask image (grayscale)
             mask_image = Gimp.Image.new(ctx_size, ctx_size, Gimp.ImageBaseType.GRAY)
             if not mask_image:
                 image.remove_channel(selection_channel)
                 raise Exception("Failed to create mask image")
-                
-            mask_layer = Gimp.Layer.new(mask_image, "selection_mask", ctx_size, ctx_size,
-                                      Gimp.ImageType.GRAY_IMAGE, 100.0, Gimp.LayerMode.NORMAL)
+
+            mask_layer = Gimp.Layer.new(
+                mask_image,
+                "selection_mask",
+                ctx_size,
+                ctx_size,
+                Gimp.ImageType.GRAY_IMAGE,
+                100.0,
+                Gimp.LayerMode.NORMAL,
+            )
             if not mask_layer:
                 mask_image.delete()
                 image.remove_channel(selection_channel)
                 raise Exception("Failed to create mask layer")
-                
+
             mask_image.insert_layer(mask_layer, None, 0)
 
             # Fill with white (preserve context areas that extend beyond original image)
             from gi.repository import Gegl
+
             white_color = Gegl.Color.new("white")
             Gimp.context_set_foreground(white_color)
             mask_layer.edit_fill(Gimp.FillType.FOREGROUND)
             print("DEBUG: Created white background mask (preserve context)")
-            
+
             # Force layer update to make sure white fill is committed
             mask_layer.update(0, 0, ctx_size, ctx_size)
-            
+
             # Step 3: Copy only the original image area, leave extended context white
-            
+
             # Calculate where original image appears in context square
             orig_width, orig_height = image.get_width(), image.get_height()
-            img_offset_x = max(0, -ctx_x1)  # where original image starts in context square
-            img_offset_y = max(0, -ctx_y1)  # where original image starts in context square
+            img_offset_x = max(
+                0, -ctx_x1
+            )  # where original image starts in context square
+            img_offset_y = max(
+                0, -ctx_y1
+            )  # where original image starts in context square
             img_end_x = min(ctx_size, img_offset_x + orig_width)
             img_end_y = min(ctx_size, img_offset_y + orig_height)
-            
-            print(f"DEBUG: Original image appears at ({img_offset_x},{img_offset_y}) to ({img_end_x},{img_end_y}) in context square")
-            
+
+            print(
+                f"DEBUG: Original image appears at ({img_offset_x},{img_offset_y}) to ({img_end_x},{img_end_y}) in context square"
+            )
+
             # Only process if there's an intersection
             if img_end_x > img_offset_x and img_end_y > img_offset_y:
                 # Get buffers for pixel-level operations
@@ -1375,112 +1504,122 @@ class GimpAIPlugin(Gimp.PlugIn):
                     mask_image.delete()
                     image.remove_channel(selection_channel)
                     raise Exception("Failed to get selection channel buffer")
-                    
+
                 mask_shadow_buffer = mask_layer.get_shadow_buffer()
                 if not mask_shadow_buffer:
                     mask_image.delete()
                     image.remove_channel(selection_channel)
                     raise Exception("Failed to get mask shadow buffer")
-                
+
                 print("DEBUG: Starting Gegl pixel copying from selection channel")
-                
+
                 # Create Gegl processing graph for selection shape copying
                 graph = Gegl.Node()
-                
+
                 # Source: Selection channel buffer (contains exact selection shape)
                 selection_source = graph.create_child("gegl:buffer-source")
                 selection_source.set_property("buffer", selection_buffer)
-                
+
                 # Translate selection from world coordinates to context square coordinates
                 # Context square starts at (ctx_x1, ctx_y1) in world coordinates
                 # Selection coordinates need to be translated by (-ctx_x1, -ctx_y1)
                 # to map them into context square coordinate system
-                
+
                 translate = graph.create_child("gegl:translate")
                 translate.set_property("x", float(-ctx_x1))
                 translate.set_property("y", float(-ctx_y1))
-                
+
                 # TEST: Comment out invert to see if extended areas are naturally white
                 # invert = graph.create_child("gegl:invert-linear")
-                
+
                 # Write to mask shadow buffer
                 output = graph.create_child("gegl:write-buffer")
                 output.set_property("buffer", mask_shadow_buffer)
-                
+
                 # Link the processing chain: selection → translate → mask (NO INVERT, NO CROP)
                 selection_source.link(translate)
                 translate.link(output)
-                
-                print(f"DEBUG: TEST - Processing selection shape: translate by ({-ctx_x1},{-ctx_y1}), NO INVERT, NO CROP")
-                
+
+                print(
+                    f"DEBUG: TEST - Processing selection shape: translate by ({-ctx_x1},{-ctx_y1}), NO INVERT, NO CROP"
+                )
+
                 # Process the graph to copy selection shape - NO FALLBACK
                 output.process()
-                print("DEBUG: Successfully copied exact selection shape to mask using Gegl")
-                
+                print(
+                    "DEBUG: Successfully copied exact selection shape to mask using Gegl"
+                )
+
                 # Flush and merge shadow buffer to make changes visible
                 mask_shadow_buffer.flush()
                 mask_layer.merge_shadow(True)
                 print("DEBUG: Merged shadow buffer with base layer")
             else:
                 print("DEBUG: No intersection - mask remains fully white")
-                
+
             # Force complete layer update
             mask_layer.update(0, 0, ctx_size, ctx_size)
-            
+
             # Force flush all changes to ensure PNG export sees the correct data
             Gimp.displays_flush()
-            
+
             print("DEBUG: Successfully copied exact selection shape to mask using Gegl")
-            
+
             # Step 4: Scale mask to target size (same as context image scaling)
             mask_image.scale(target_size, target_size)
-            print(f"DEBUG: Scaled mask from {ctx_size}x{ctx_size} to {target_size}x{target_size}")
-            
+            print(
+                f"DEBUG: Scaled mask from {ctx_size}x{ctx_size} to {target_size}x{target_size}"
+            )
+
             # Step 4.5: Invert the entire mask as the final step
             # This converts: selection=white → black (inpaint), context=white → white (preserve)
             # Wait, this would make everything wrong. Let me think...
             # Actually, we need: selection=white → black, non-selected=black → white, context=white → white
             # So we need a different approach...
-            
-            print("DEBUG: Applying final inversion to convert selection to black for OpenAI")
+
+            print(
+                "DEBUG: Applying final inversion to convert selection to black for OpenAI"
+            )
             scaled_mask_layer = mask_image.get_layers()[0]
-            
+
             # Create Gegl invert operation on the scaled mask
             from gi.repository import Gegl
-            
+
             # Get the layer buffer
             layer_buffer = scaled_mask_layer.get_buffer()
             shadow_buffer = scaled_mask_layer.get_shadow_buffer()
-            
+
             # Create invert processing chain
             invert_graph = Gegl.Node()
             buffer_source = invert_graph.create_child("gegl:buffer-source")
             buffer_source.set_property("buffer", layer_buffer)
-            
+
             invert_node = invert_graph.create_child("gegl:invert-linear")
-            
+
             buffer_write = invert_graph.create_child("gegl:write-buffer")
             buffer_write.set_property("buffer", shadow_buffer)
-            
+
             # Link and process
             buffer_source.link(invert_node)
             invert_node.link(buffer_write)
             buffer_write.process()
-            
+
             # Merge shadow buffer
             shadow_buffer.flush()
             scaled_mask_layer.merge_shadow(True)
             scaled_mask_layer.update(0, 0, target_size, target_size)
-            
-            print("DEBUG: Final inversion complete - selection should now be black, context should be white")
-            
+
+            print(
+                "DEBUG: Final inversion complete - selection should now be black, context should be white"
+            )
+
             # Step 5: Export as PNG for OpenAI
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
                 temp_filename = temp_file.name
 
             try:
                 file = Gio.File.new_for_path(temp_filename)
-                
+
                 pdb_proc = Gimp.get_pdb().lookup_procedure("file-png-export")
                 pdb_config = pdb_proc.create_config()
                 pdb_config.set_property("run-mode", Gimp.RunMode.NONINTERACTIVE)
@@ -1493,7 +1632,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                     mask_image.delete()
                     image.remove_channel(selection_channel)
                     raise Exception(f"PNG export failed with status: {result.index(0)}")
-                
+
                 # Read the exported mask PNG
                 with open(temp_filename, "rb") as f:
                     png_data = f.read()
@@ -1506,7 +1645,9 @@ class GimpAIPlugin(Gimp.PlugIn):
                 mask_image.delete()
                 image.remove_channel(selection_channel)
 
-                print(f"DEBUG: Created pixel-perfect selection mask PNG: {len(png_data)} bytes")
+                print(
+                    f"DEBUG: Created pixel-perfect selection mask PNG: {len(png_data)} bytes"
+                )
                 return png_data
 
             except Exception as e:
@@ -1676,10 +1817,10 @@ class GimpAIPlugin(Gimp.PlugIn):
             # Prepare multipart form data for GPT-Image-1
             fields = {
                 "model": "gpt-image-1",
-                "prompt": prompt, 
-                "n": "1", 
+                "prompt": prompt,
+                "n": "1",
                 "quality": "high",
-                "moderation": "low"  # Less restrictive filtering
+                "moderation": "low",  # Less restrictive filtering
             }
 
             # Convert base64 image data back to bytes for the API
@@ -1688,7 +1829,9 @@ class GimpAIPlugin(Gimp.PlugIn):
             image_bytes = base64.b64decode(image_data)
 
             # Save debug copies of what we're sending to GPT-Image-1
-            debug_input_filename = f"/tmp/gpt-image-1_input_{len(image_bytes)}_bytes.png"
+            debug_input_filename = (
+                f"/tmp/gpt-image-1_input_{len(image_bytes)}_bytes.png"
+            )
             with open(debug_input_filename, "wb") as debug_file:
                 debug_file.write(image_bytes)
             print(f"DEBUG: Saved input image to {debug_input_filename}")
@@ -1729,12 +1872,14 @@ class GimpAIPlugin(Gimp.PlugIn):
                         f"DEBUG: Mask format: {format_name} (color type {color_type}) dimensions: {mask_width}x{mask_height}"
                     )
                     print(f"DEBUG: Mask size: {len(mask_data)} bytes")
-                    
+
                     # Check if dimensions match
                     if img_width == mask_width and img_height == mask_height:
                         print("DEBUG: ✅ Image and mask dimensions match!")
                     else:
-                        print(f"DEBUG: ❌ DIMENSION MISMATCH! Image: {img_width}x{img_height}, Mask: {mask_width}x{mask_height}")
+                        print(
+                            f"DEBUG: ❌ DIMENSION MISMATCH! Image: {img_width}x{img_height}, Mask: {mask_width}x{mask_height}"
+                        )
                 else:
                     print("DEBUG: Mask PNG header too short")
             else:
@@ -1807,7 +1952,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 return False, "Invalid API response - empty data array"
 
             result_data = api_response["data"][0]
-            
+
             # Handle both URL and base64 response formats
             if "url" in result_data:
                 # URL format (DALL-E 2 style)
@@ -1818,24 +1963,25 @@ class GimpAIPlugin(Gimp.PlugIn):
                 Gimp.progress_set_text("Downloading AI result...")
                 Gimp.progress_update(0.8)  # 80% - Starting download
                 Gimp.displays_flush()
-                
+
                 # Download from URL
                 with urllib.request.urlopen(image_url, timeout=60) as response:
                     image_data = response.read()
-                    
+
             elif "b64_json" in result_data:
                 # Base64 format (GPT-Image-1 style)
                 print("DEBUG: Processing base64 image data from GPT-Image-1")
-                
+
                 # Update progress for processing phase
                 Gimp.progress_set_text("Processing AI result...")
                 Gimp.progress_update(0.8)  # 80% - Processing data
                 Gimp.displays_flush()
-                
+
                 # Decode base64 data
                 import base64
+
                 image_data = base64.b64decode(result_data["b64_json"])
-                
+
             else:
                 return False, "Invalid API response - no image URL or base64 data"
 
@@ -1942,9 +2088,11 @@ class GimpAIPlugin(Gimp.PlugIn):
                 print(
                     f"DEBUG: Placing {ctx_size}x{ctx_size} AI result at ({paste_x},{paste_y})"
                 )
-                
+
                 # Clear selection before Gegl processing to prevent clipping, then restore it
-                print("DEBUG: Saving and clearing selection before Gegl processing to prevent clipping")
+                print(
+                    "DEBUG: Saving and clearing selection before Gegl processing to prevent clipping"
+                )
                 selection_channel = Gimp.Selection.save(image)
                 Gimp.Selection.none(image)
 
@@ -1980,10 +2128,10 @@ class GimpAIPlugin(Gimp.PlugIn):
                     # Flush and merge shadow buffer - update entire layer
                     shadow_buffer.flush()
                     result_layer.merge_shadow(True)
-                    
+
                     # Update the entire layer
                     result_layer.update(0, 0, orig_width, orig_height)
-                    
+
                     print(f"DEBUG: Updated entire layer: {orig_width}x{orig_height}")
 
                     print(
@@ -1992,16 +2140,16 @@ class GimpAIPlugin(Gimp.PlugIn):
                 except Exception as e:
                     print(f"DEBUG: Gegl processing failed: {e}")
                     raise
-                
+
                 # Restore the original selection
                 print("DEBUG: Restoring original selection after Gegl processing")
                 try:
                     pdb = Gimp.get_pdb()
-                    select_proc = pdb.lookup_procedure('gimp-image-select-item')
+                    select_proc = pdb.lookup_procedure("gimp-image-select-item")
                     select_config = select_proc.create_config()
-                    select_config.set_property('image', image)
-                    select_config.set_property('operation', Gimp.ChannelOps.REPLACE)
-                    select_config.set_property('item', selection_channel)
+                    select_config.set_property("image", image)
+                    select_config.set_property("operation", Gimp.ChannelOps.REPLACE)
+                    select_config.set_property("item", selection_channel)
                     select_proc.run(select_config)
                     print("DEBUG: Selection successfully restored")
                 except Exception as e:
@@ -2012,7 +2160,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 # TEMPORARILY DISABLED - Create a layer mask to show only the selection area while preserving full AI content
                 print("DEBUG: MASK CREATION TEMPORARILY DISABLED FOR TESTING")
                 print("DEBUG: Layer should show full AI result without any masking")
-                
+
                 # if context_info["has_selection"]:
                 #     print(
                 #         "DEBUG: Creating selection-based mask while preserving full AI result in layer"
@@ -2022,7 +2170,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 #     # This preserves the full AI content in the layer but masks visibility to selection area
                 #     mask = result_layer.create_mask(Gimp.AddMaskType.SELECTION)
                 #     result_layer.add_mask(mask)
-                    
+
                 #     print(
                 #         "DEBUG: Applied selection-based layer mask - full AI result preserved in layer, visibility limited to selection"
                 #     )
@@ -2088,13 +2236,13 @@ class GimpAIPlugin(Gimp.PlugIn):
                 return False, "Invalid API response - empty data array"
 
             result_data = api_response["data"][0]
-            
+
             # Handle both URL and base64 response formats
             if "url" in result_data:
                 # URL format (DALL-E 2 style)
                 image_url = result_data["url"]
                 print(f"DEBUG: Downloading result from: {image_url}")
-                
+
                 # Download from URL
                 req = urllib.request.Request(image_url)
                 req.add_header("User-Agent", "GIMP-AI-Plugin/1.0")
@@ -2103,15 +2251,16 @@ class GimpAIPlugin(Gimp.PlugIn):
                 ctx.verify_mode = ssl.CERT_NONE
                 with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
                     image_data = response.read()
-                    
+
             elif "b64_json" in result_data:
                 # Base64 format (GPT-Image-1 style)
                 print("DEBUG: Processing base64 image data from GPT-Image-1")
-                
+
                 # Decode base64 data
                 import base64
+
                 image_data = base64.b64decode(result_data["b64_json"])
-                
+
             else:
                 return False, "Invalid API response - no image URL or base64 data"
 
@@ -2282,7 +2431,7 @@ class GimpAIPlugin(Gimp.PlugIn):
             procedure = Gimp.ImageProcedure.new(
                 self, name, Gimp.PDBProcType.PLUGIN, self.run_inpaint, None
             )
-            procedure.set_menu_label("AI Inpaint Selection")
+            procedure.set_menu_label("Image to Image")
             procedure.add_menu_path("<Image>/Filters/AI/")
             return procedure
 
@@ -2369,19 +2518,19 @@ class GimpAIPlugin(Gimp.PlugIn):
         # Step 4: Determine processing mode and prepare accordingly
         mode = self._get_processing_mode()
         print(f"DEBUG: Using processing mode: {mode}")
-        
+
         if mode == "full_image":
             # Modified path: Use existing context extraction but base on full image
             print("DEBUG: Calculating full-image context extraction...")
             context_info = self._calculate_full_image_context_extraction(image)
         else:
-            # Existing path: Context extraction for future models  
+            # Existing path: Context extraction for future models
             print("DEBUG: Calculating context extraction...")
             context_info = self._calculate_context_extraction(image)
-            
+
         Gimp.progress_update(0.4)  # 40% - Context calculated
         Gimp.displays_flush()  # Force UI update
-        
+
         # Step 5: Extract context region with padding (works for both modes)
         print("DEBUG: Extracting context region...")
         success, message, image_data = self._extract_context_region(image, context_info)
@@ -2393,10 +2542,12 @@ class GimpAIPlugin(Gimp.PlugIn):
         print(f"DEBUG: Context extraction succeeded: {message}")
         Gimp.progress_update(0.5)  # 50% - Context extracted
         Gimp.displays_flush()  # Force UI update
-        
+
         # Step 6: Create smart mask that respects selection within context
         print("DEBUG: Creating context-aware mask...")
-        mask_data = self._create_context_mask(image, context_info, context_info["target_size"])
+        mask_data = self._create_context_mask(
+            image, context_info, context_info["target_size"]
+        )
 
         Gimp.progress_update(0.6)  # 60% - Mask created
         Gimp.displays_flush()  # Force UI update
