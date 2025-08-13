@@ -22,7 +22,8 @@ gi.require_version("GimpUi", "3.0")
 gi.require_version("Gegl", "0.4")
 gi.require_version("Gio", "2.0")
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gimp, GimpUi, GLib, Gegl, Gio, Gtk
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gimp, GimpUi, GLib, Gegl, Gio, Gtk, Gdk
 
 # Import pure coordinate transformation functions
 from coordinate_utils import (
@@ -42,11 +43,23 @@ class GimpAIPlugin(Gimp.PlugIn):
 
     def _load_config(self):
         """Load configuration from various locations"""
-        config_paths = [
+        # Use GIMP API for primary config location
+        try:
+            plugin_dir = Gimp.PlugIn.directory()
+            gimp_config_path = os.path.join(plugin_dir, "gimp-ai-plugin", "config.json")
+        except:
+            gimp_config_path = None
+            
+        config_paths = []
+        if gimp_config_path:
+            config_paths.append(gimp_config_path)
+        
+        # Fallback paths for backward compatibility
+        config_paths.extend([
             os.path.join(os.path.dirname(__file__), "config.json"),
             os.path.expanduser("~/.config/gimp-ai/config.json"),
             os.path.expanduser("~/.gimp-ai-config.json"),
-        ]
+        ])
 
         for config_path in config_paths:
             try:
@@ -59,12 +72,60 @@ class GimpAIPlugin(Gimp.PlugIn):
                 print(f"DEBUG: Failed to load config from {config_path}: {e}")
                 continue
 
-        # Default config
+        # Default config with prompt history support
         print("DEBUG: Using default config (no config file found)")
         return {
             "openai": {"api_key": None},
             "settings": {"max_image_size": 512, "timeout": 30},
+            "prompt_history": [],
+            "last_prompt": "",
         }
+
+    def _save_config(self):
+        """Save configuration using GIMP API location"""
+        try:
+            plugin_dir = Gimp.PlugIn.directory()
+            config_dir = os.path.join(plugin_dir, "gimp-ai-plugin")
+            config_path = os.path.join(config_dir, "config.json")
+            
+            # Create directory if it doesn't exist
+            os.makedirs(config_dir, exist_ok=True)
+            
+            with open(config_path, "w") as f:
+                json.dump(self.config, f, indent=4)
+            print(f"DEBUG: Saved config to {config_path}")
+            return True
+        except Exception as e:
+            print(f"DEBUG: Failed to save config: {e}")
+            return False
+
+    def _add_to_prompt_history(self, prompt):
+        """Add prompt to history, keeping last 10 unique prompts"""
+        if not prompt.strip():
+            return
+            
+        # Remove if already exists to avoid duplicates
+        history = self.config.get("prompt_history", [])
+        if prompt in history:
+            history.remove(prompt)
+        
+        # Add to beginning
+        history.insert(0, prompt)
+        
+        # Keep only last 10
+        history = history[:10]
+        
+        self.config["prompt_history"] = history
+        self.config["last_prompt"] = prompt
+        self._save_config()
+
+    def _get_prompt_history(self):
+        """Get prompt history list"""
+        return self.config.get("prompt_history", [])
+
+    def _get_last_prompt(self):
+        """Get the last used prompt"""
+        return self.config.get("last_prompt", "")
 
     def _get_api_key(self):
         """Get OpenAI API key from config or environment"""
@@ -86,6 +147,11 @@ class GimpAIPlugin(Gimp.PlugIn):
 
     def _show_prompt_dialog(self, title="AI Prompt", default_text=""):
         """Show a GIMP UI dialog to get user input for AI prompt"""
+        # Use last prompt as default if available, otherwise use provided default
+        if not default_text:
+            default_text = self._get_last_prompt()
+        if not default_text:
+            default_text = "Describe what you want to generate..."
         try:
             # Initialize GIMP UI system (only if not already initialized)
             if not hasattr(self, "_ui_initialized"):
@@ -99,10 +165,11 @@ class GimpAIPlugin(Gimp.PlugIn):
             dialog = GimpUi.Dialog(use_header_bar=use_header_bar, title=title)
 
             # Set up dialog properties
-            dialog.set_default_size(400, 150)
-            dialog.set_resizable(False)
+            dialog.set_default_size(600, 300)
+            dialog.set_resizable(True)
 
-            # Add buttons using GIMP's standard approach
+            # Add buttons using GIMP's standard approach  
+            dialog.add_button("Settings", Gtk.ResponseType.HELP)  # Use HELP for Settings
             dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
             ok_button = dialog.add_button("OK", Gtk.ResponseType.OK)
             ok_button.set_can_default(True)
@@ -121,44 +188,201 @@ class GimpAIPlugin(Gimp.PlugIn):
             label.set_halign(Gtk.Align.START)
             content_area.pack_start(label, False, False, 0)
 
-            # Text entry - will automatically use theme colors
-            entry = Gtk.Entry()
-            entry.set_text(default_text)
-            entry.set_width_chars(50)
-            entry.set_placeholder_text("Describe what you want to generate...")
+            # Prompt history dropdown
+            history = self._get_prompt_history()
+            history_combo = None
+            if history:
+                history_label = Gtk.Label(label="Recent prompts:")
+                history_label.set_halign(Gtk.Align.START)
+                content_area.pack_start(history_label, False, False, 0)
+                
+                history_combo = Gtk.ComboBoxText()
+                history_combo.append_text("Select from recent prompts...")
+                for prompt in history:
+                    # Truncate long prompts for display
+                    display_prompt = prompt[:60] + "..." if len(prompt) > 60 else prompt
+                    history_combo.append_text(display_prompt)
+                history_combo.set_active(0)
+                content_area.pack_start(history_combo, False, False, 0)
 
-            # Make Enter key activate OK button
-            entry.set_activates_default(True)
-
-            content_area.pack_start(entry, False, False, 0)
+            # Multiline text view for prompts
+            scrolled_window = Gtk.ScrolledWindow()
+            scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            scrolled_window.set_size_request(560, 150)
+            
+            text_view = Gtk.TextView()
+            text_view.set_wrap_mode(Gtk.WrapMode.WORD)
+            text_view.set_border_width(8)
+            
+            # Set default text
+            text_buffer = text_view.get_buffer()
+            text_buffer.set_text(default_text)
+            
+            scrolled_window.add(text_view)
+            content_area.pack_start(scrolled_window, True, True, 0)
+            
+            # Connect Ctrl+Enter to activate OK button
+            def on_key_press(widget, event):
+                if (event.state & Gdk.ModifierType.CONTROL_MASK and 
+                    event.keyval == Gdk.KEY_Return):
+                    dialog.response(Gtk.ResponseType.OK)
+                    return True
+                return False
+            text_view.connect("key-press-event", on_key_press)
+            
+            # Connect history selection to populate text view
+            if history_combo:
+                def on_history_changed(combo):
+                    active = combo.get_active()
+                    if active > 0:  # Skip the placeholder item
+                        selected_prompt = history[active - 1]  # -1 because of placeholder
+                        text_buffer.set_text(selected_prompt)
+                        text_view.grab_focus()
+                        text_buffer.select_range(text_buffer.get_start_iter(), text_buffer.get_end_iter())
+                history_combo.connect("changed", on_history_changed)
 
             # Show all widgets
             content_area.show_all()
 
-            # Focus the text entry and select all text for easy editing
-            entry.grab_focus()
-            entry.select_region(0, -1)
+            # Focus the text view and select all text for easy editing
+            text_view.grab_focus()
+            text_buffer.select_range(text_buffer.get_start_iter(), text_buffer.get_end_iter())
 
-            # Run dialog
+            # Run dialog in loop to handle Settings button
             print("DEBUG: About to call dialog.run()...")
-            response = dialog.run()
-            print(f"DEBUG: Dialog response: {response}")
+            while True:
+                response = dialog.run()
+                print(f"DEBUG: Dialog response: {response}")
 
-            if response == Gtk.ResponseType.OK:
-                prompt = entry.get_text().strip()
-                print(f"DEBUG: Got prompt text: '{prompt}', destroying dialog...")
-                dialog.destroy()
-                print("DEBUG: Dialog destroyed, returning prompt")
-                return prompt if prompt else None
-            else:
-                print("DEBUG: Dialog cancelled, destroying...")
-                dialog.destroy()
-                return None
+                if response == Gtk.ResponseType.OK:
+                    start_iter = text_buffer.get_start_iter()
+                    end_iter = text_buffer.get_end_iter()
+                    prompt = text_buffer.get_text(start_iter, end_iter, False).strip()
+                    print(f"DEBUG: Got prompt text: '{prompt}', destroying dialog...")
+                    dialog.destroy()
+                    print("DEBUG: Dialog destroyed, returning prompt")
+                    if prompt:
+                        self._add_to_prompt_history(prompt)
+                    return prompt if prompt else None
+                elif response == Gtk.ResponseType.HELP:  # Settings button
+                    print("DEBUG: Settings button clicked")
+                    self._show_settings_dialog(dialog)
+                    # Continue loop to keep main dialog open
+                else:
+                    print("DEBUG: Dialog cancelled, destroying...")
+                    dialog.destroy()
+                    return None
 
         except Exception as e:
             print(f"DEBUG: Dialog error: {e}")
             # Fallback to default prompt if dialog fails
             return default_text if default_text else "fill this area naturally"
+
+    def _show_settings_dialog(self, parent_dialog):
+        """Show settings dialog with write-only API key field"""
+        try:
+            dialog = Gtk.Dialog(
+                title="AI Plugin Settings",
+                parent=parent_dialog,
+                flags=Gtk.DialogFlags.MODAL,
+            )
+            
+            # Set up dialog properties
+            dialog.set_default_size(500, 400)
+            dialog.set_resizable(True)
+
+            # Add buttons
+            dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+            save_button = dialog.add_button("Save", Gtk.ResponseType.OK)
+            save_button.set_can_default(True)
+            save_button.grab_default()
+
+            # Add content
+            content_area = dialog.get_content_area()
+            content_area.set_spacing(15)
+            content_area.set_margin_left(20)
+            content_area.set_margin_right(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+
+            # API Key section
+            api_frame = Gtk.Frame(label="OpenAI API Configuration")
+            api_box = Gtk.VBox(spacing=10)
+            api_box.set_margin_left(10)
+            api_box.set_margin_right(10)
+            api_box.set_margin_top(10)
+            api_box.set_margin_bottom(10)
+
+            # Current API key status
+            current_key = self.config.get("openai", {}).get("api_key")
+            if current_key:
+                status_label = Gtk.Label(label="✓ API key is configured")
+                status_label.set_halign(Gtk.Align.START)
+            else:
+                status_label = Gtk.Label(label="✗ No API key configured")
+                status_label.set_halign(Gtk.Align.START)
+            api_box.pack_start(status_label, False, False, 0)
+
+            # API key input (write-only)
+            key_label = Gtk.Label(label="Enter new API key (write-only):")
+            key_label.set_halign(Gtk.Align.START)
+            api_box.pack_start(key_label, False, False, 0)
+
+            key_entry = Gtk.Entry()
+            key_entry.set_placeholder_text("sk-proj-...")
+            key_entry.set_visibility(False)  # Hide the text for security
+            api_box.pack_start(key_entry, False, False, 0)
+
+            api_frame.add(api_box)
+            content_area.pack_start(api_frame, False, False, 0)
+
+            # Prompt History section
+            history_frame = Gtk.Frame(label="Prompt History")
+            history_box = Gtk.VBox(spacing=10)
+            history_box.set_margin_left(10)
+            history_box.set_margin_right(10)
+            history_box.set_margin_top(10)
+            history_box.set_margin_bottom(10)
+
+            # History count
+            history_count = len(self._get_prompt_history())
+            count_label = Gtk.Label(label=f"Stored prompts: {history_count}")
+            count_label.set_halign(Gtk.Align.START)
+            history_box.pack_start(count_label, False, False, 0)
+
+            # Clear history button
+            clear_button = Gtk.Button(label="Clear Prompt History")
+            clear_button.connect("clicked", self._on_clear_history_clicked)
+            history_box.pack_start(clear_button, False, False, 0)
+
+            history_frame.add(history_box)
+            content_area.pack_start(history_frame, False, False, 0)
+
+            # Show all widgets
+            content_area.show_all()
+
+            # Run dialog
+            response = dialog.run()
+            if response == Gtk.ResponseType.OK:
+                # Save new API key if provided
+                new_key = key_entry.get_text().strip()
+                if new_key:
+                    if "openai" not in self.config:
+                        self.config["openai"] = {}
+                    self.config["openai"]["api_key"] = new_key
+                    self._save_config()
+                    print("DEBUG: API key updated")
+
+            dialog.destroy()
+
+        except Exception as e:
+            print(f"DEBUG: Settings dialog error: {e}")
+
+    def _on_clear_history_clicked(self, button):
+        """Handle clear history button click"""
+        self.config["prompt_history"] = []
+        self._save_config()
+        print("DEBUG: Prompt history cleared")
 
     def _test_image_access(self, image, drawables):
         """Test basic image data access"""

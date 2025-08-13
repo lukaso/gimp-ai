@@ -21,7 +21,10 @@
       "Bash(grep:*)",
       "Bash(sed:*)",
       "Bash(true)",
-      "Bash(python tests:*)"
+      "Bash(python tests:*)",
+      "WebSearch",
+      "WebFetch(domain:help.openai.com)",
+      "WebFetch(domain:schoenitzer.de)"
     ],
     "deny": [
       "Read(file_path:*/config.json)"
