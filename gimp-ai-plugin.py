@@ -926,54 +926,6 @@ class GimpAIPlugin(Gimp.PlugIn):
             )
             return fallback_png
 
-    def _create_transparent_mask(self, width=512, height=512):
-        """Create a completely transparent mask (inpaint everything)"""
-        try:
-            print(f"DEBUG: Creating completely transparent mask {width}x{height}")
-
-            # Create IHDR chunk data (RGBA format)
-            ihdr_data = (
-                width.to_bytes(4, "big")  # Width
-                + height.to_bytes(4, "big")  # Height
-                + b"\x08\x06\x00\x00\x00"  # 8-bit RGBA
-            )
-
-            # Calculate IHDR CRC
-            import zlib
-
-            ihdr_crc = zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF
-
-            # Create completely transparent image data
-            row_data = (
-                b"\x00" + b"\x00\x00\x00\x00" * width
-            )  # Filter byte + transparent RGBA pixels
-            image_data = row_data * height
-            compressed_data = zlib.compress(image_data)
-
-            # Calculate IDAT CRC
-            idat_crc = zlib.crc32(b"IDAT" + compressed_data) & 0xFFFFFFFF
-
-            # Build complete PNG
-            png_data = (
-                b"\x89PNG\r\n\x1a\n"
-                + len(ihdr_data).to_bytes(4, "big")
-                + b"IHDR"
-                + ihdr_data
-                + ihdr_crc.to_bytes(4, "big")
-                + len(compressed_data).to_bytes(4, "big")
-                + b"IDAT"
-                + compressed_data
-                + idat_crc.to_bytes(4, "big")
-                + b"\x00\x00\x00\x00IEND\xae B`\x82"
-            )
-
-            print(f"DEBUG: Created transparent mask PNG: {len(png_data)} bytes")
-            return png_data
-
-        except Exception as e:
-            print(f"DEBUG: Failed to create transparent mask: {e}")
-            return self._create_simple_mask(width, height)
-
     def _create_black_mask(self, width=512, height=512):
         """Create a mask with black center circle (for testing different mask formats)"""
         try:
@@ -1032,66 +984,6 @@ class GimpAIPlugin(Gimp.PlugIn):
         except Exception as e:
             print(f"DEBUG: Failed to create black mask: {e}")
             return self._create_simple_mask(width, height)
-
-    def _create_white_mask_with_black_selection(
-        self, width, height, sel_x1, sel_y1, sel_x2, sel_y2
-    ):
-        """Create a white mask with black selection rectangle"""
-        try:
-            print(
-                f"DEBUG: Creating white mask {width}x{height} with black selection ({sel_x1},{sel_y1})-({sel_x2},{sel_y2})"
-            )
-
-            # Create IHDR chunk data (L - grayscale format for OpenAI mask)
-            ihdr_data = (
-                width.to_bytes(4, "big")
-                + height.to_bytes(4, "big")
-                + b"\x08\x00\x00\x00\x00"  # 8-bit grayscale (L format)
-            )
-            # Calculate IHDR CRC
-            import zlib
-
-            ihdr_crc = zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF
-
-            # Create image data - white background with black selection area
-            image_rows = []
-            for y in range(height):
-                row = b"\x00"  # Filter byte (0 = none)
-                for x in range(width):
-                    # Black (0) inside selection, white (255) outside
-                    if sel_x1 <= x < sel_x2 and sel_y1 <= y < sel_y2:
-                        row += b"\x00"  # Black for selection area
-                    else:
-                        row += b"\xff"  # White for non-selection area
-                image_rows.append(row)
-
-            # Compress image data
-            image_data = b"".join(image_rows)
-            compressed_data = zlib.compress(image_data)
-            idat_crc = zlib.crc32(b"IDAT" + compressed_data) & 0xFFFFFFFF
-
-            # Construct PNG
-            png_data = (
-                b"\x89PNG\r\n\x1a\n"  # PNG signature
-                + len(ihdr_data).to_bytes(4, "big")
-                + b"IHDR"
-                + ihdr_data
-                + ihdr_crc.to_bytes(4, "big")
-                + len(compressed_data).to_bytes(4, "big")
-                + b"IDAT"
-                + compressed_data
-                + idat_crc.to_bytes(4, "big")
-                + b"\x00\x00\x00\x00IEND\xaeB`\x82"  # IEND chunk
-            )
-
-            print(
-                f"DEBUG: Created white mask with black selection: {len(png_data)} bytes"
-            )
-            return png_data
-
-        except Exception as e:
-            print(f"DEBUG: White mask creation failed: {e}")
-            return self._create_black_mask(width, height)
 
     def _calculate_full_image_context_extraction(self, image):
         """Calculate context extraction for full image (GPT-Image-1 mode)"""
@@ -1186,7 +1078,6 @@ class GimpAIPlugin(Gimp.PlugIn):
                 )
 
             # Extract selection bounds
-            has_selection = selection_bounds[0]
             sel_x1 = selection_bounds[2] if len(selection_bounds) > 2 else 0
             sel_y1 = selection_bounds[3] if len(selection_bounds) > 3 else 0
             sel_x2 = selection_bounds[4] if len(selection_bounds) > 4 else 0
@@ -2479,7 +2370,7 @@ class GimpAIPlugin(Gimp.PlugIn):
             procedure = Gimp.ImageProcedure.new(
                 self, name, Gimp.PDBProcType.PLUGIN, self.run_layer_generator, None
             )
-            procedure.set_menu_label("DALL-E 3 Layer Generator")
+            procedure.set_menu_label("Image Generator")
             procedure.add_menu_path("<Image>/Filters/AI/")
             return procedure
 
@@ -2605,25 +2496,39 @@ class GimpAIPlugin(Gimp.PlugIn):
         Gimp.progress_end()
         return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
 
-    def _generate_dalle3_layer(self, image, prompt, api_key):
-        """Generate a new layer using DALL-E 3"""
+    def _generate_gpt_image_layer(self, image, prompt, api_key, size="auto"):
+        """Generate a new layer using GPT-Image-1"""
         try:
             import json
             import urllib.request
-            import urllib.parse
-            import ssl
 
-            # DALL-E 3 API endpoint
+            # GPT-Image-1 API endpoint
             url = "https://api.openai.com/v1/images/generations"
+
+            # Determine optimal size based on image dimensions or user preference
+            if size == "auto":
+                img_width = image.get_width()
+                img_height = image.get_height()
+                aspect_ratio = img_width / img_height
+                
+                if aspect_ratio > 1.2:  # Landscape
+                    optimal_size = "1536x1024"
+                elif aspect_ratio < 0.83:  # Portrait
+                    optimal_size = "1024x1536"
+                else:  # Square or close to square
+                    optimal_size = "1024x1024"
+            else:
+                optimal_size = size
+            
+            print(f"DEBUG: Using size {optimal_size} for generation")
 
             # Prepare the request data
             data = {
-                "model": "dall-e-3",
+                "model": "gpt-image-1",
                 "prompt": prompt,
                 "n": 1,
-                "size": "1024x1024",
-                "quality": "standard",
-                "response_format": "url",
+                "size": optimal_size,
+                "quality": "high",
             }
 
             # Create the request
@@ -2633,27 +2538,88 @@ class GimpAIPlugin(Gimp.PlugIn):
             req.add_header("Content-Type", "application/json")
             req.add_header("Authorization", f"Bearer {api_key}")
 
-            print(f"DEBUG: Calling DALL-E 3 API with prompt: {prompt}")
+            print(f"DEBUG: Calling GPT-Image-1 API with prompt: {prompt}")
 
-            # Make the API call
-            with self._make_url_request(req) as response:
+            # Make the API call with extended timeout for image generation
+            with self._make_url_request(req, timeout=180) as response:
                 response_data = json.loads(response.read().decode("utf-8"))
 
-            print(f"DEBUG: DALL-E 3 API response received")
+            print(f"DEBUG: GPT-Image-1 API response received")
 
-            # Extract the image URL
+            # Extract the image data (base64 for GPT-Image-1)
             if "data" in response_data and len(response_data["data"]) > 0:
-                image_url = response_data["data"][0]["url"]
-                print(f"DEBUG: Image URL: {image_url}")
-
-                # Download and add the image as a new layer
-                return self._download_and_add_layer(image, image_url)
+                result_data = response_data["data"][0]
+                
+                # Handle base64 response format (GPT-Image-1)
+                if "b64_json" in result_data:
+                    print("DEBUG: Processing base64 image data from GPT-Image-1")
+                    
+                    # Decode base64 data
+                    import base64
+                    image_data = base64.b64decode(result_data["b64_json"])
+                    print(f"DEBUG: Decoded {len(image_data)} bytes of image data")
+                    
+                    # Process and add the image as a new layer
+                    return self._add_layer_from_data(image, image_data)
+                    
+                elif "url" in result_data:
+                    # Fallback for URL format (DALL-E 2/3 style)
+                    image_url = result_data["url"]
+                    print(f"DEBUG: Image URL: {image_url}")
+                    return self._download_and_add_layer(image, image_url)
+                else:
+                    print("ERROR: No base64 data or URL in API response")
+                    return False
             else:
                 print("ERROR: No image data in API response")
                 return False
 
         except Exception as e:
-            print(f"ERROR: DALL-E 3 API call failed: {str(e)}")
+            print(f"ERROR: GPT-Image-1 API call failed: {str(e)}")
+            return False
+
+    def _add_layer_from_data(self, image, image_data):
+        """Add image from raw data as a new layer"""
+        try:
+            import tempfile
+            import os
+
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
+                temp_file.write(image_data)
+                temp_file_path = temp_file.name
+
+            print(f"DEBUG: Saved image data to: {temp_file_path}")
+
+            try:
+                # Load the image as a new layer
+                loaded_image = Gimp.file_load(
+                    Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(temp_file_path)
+                )
+                source_layer = loaded_image.get_layers()[0]
+
+                # Copy the layer to the current image
+                new_layer = Gimp.Layer.new_from_drawable(source_layer, image)
+                new_layer.set_name("GPT-Image Generated")
+
+                # Add the layer to the image
+                image.insert_layer(new_layer, None, 0)
+
+                # Clean up
+                loaded_image.delete()
+
+                print("DEBUG: Successfully added GPT-Image-1 layer")
+                return True
+
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_file_path)
+                except:
+                    pass
+
+        except Exception as e:
+            print(f"ERROR: Failed to add layer from data: {str(e)}")
             return False
 
     def _download_and_add_layer(self, image, image_url):
@@ -2684,7 +2650,7 @@ class GimpAIPlugin(Gimp.PlugIn):
 
                 # Copy the layer to the current image
                 new_layer = Gimp.Layer.new_from_drawable(source_layer, image)
-                new_layer.set_name("DALL-E 3 Generated")
+                new_layer.set_name("GPT-Image Generated")
 
                 # Add the layer to the image
                 image.insert_layer(new_layer, None, 0)
@@ -2692,7 +2658,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 # Clean up
                 loaded_image.delete()
 
-                print("DEBUG: Successfully added DALL-E 3 layer")
+                print("DEBUG: Successfully added GPT-Image-1 layer")
                 return True
 
             finally:
@@ -2709,7 +2675,7 @@ class GimpAIPlugin(Gimp.PlugIn):
     def run_layer_generator(
         self, procedure, run_mode, image, drawables, config, run_data
     ):
-        print("DEBUG: DALL-E 3 Layer Generator called!")
+        print("DEBUG: Image Generator called!")
 
         # Get the API key
         api_key = self._get_api_key()
@@ -2722,9 +2688,7 @@ class GimpAIPlugin(Gimp.PlugIn):
             )
 
         # Show prompt dialog
-        prompt = self._show_prompt_dialog(
-            "DALL-E 3 Layer Generator", self._get_last_prompt()
-        )
+        prompt = self._show_prompt_dialog("Image Generator", self._get_last_prompt())
         if not prompt:
             return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
 
@@ -2732,20 +2696,20 @@ class GimpAIPlugin(Gimp.PlugIn):
         self._add_to_prompt_history(prompt)
 
         try:
-            # Create new layer with DALL-E 3 generated image
-            result = self._generate_dalle3_layer(image, prompt, api_key)
+            # Create new layer with GPT-Image-1 generated image
+            result = self._generate_gpt_image_layer(image, prompt, api_key)
             if result:
-                Gimp.message("✅ DALL-E 3 layer generated successfully!")
+                Gimp.message("✅ GPT-Image-1 layer generated successfully!")
                 return procedure.new_return_values(
                     Gimp.PDBStatusType.SUCCESS, GLib.Error()
                 )
             else:
-                Gimp.message("❌ Failed to generate DALL-E 3 layer")
+                Gimp.message("❌ Failed to generate GPT-Image-1 layer")
                 return procedure.new_return_values(
                     Gimp.PDBStatusType.EXECUTION_ERROR, GLib.Error()
                 )
         except Exception as e:
-            error_msg = f"Error generating DALL-E 3 layer: {str(e)}"
+            error_msg = f"Error generating GPT-Image-1 layer: {str(e)}"
             print(f"ERROR: {error_msg}")
             Gimp.message(f"❌ {error_msg}")
             return procedure.new_return_values(
