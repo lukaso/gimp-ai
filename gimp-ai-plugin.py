@@ -1,4 +1,4 @@
-#!/Applications/GIMP-3.0.4.app/Contents/MacOS/python3.10
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """
@@ -127,6 +127,55 @@ class GimpAIPlugin(Gimp.PlugIn):
                 print(f"DEBUG: All config save attempts failed: {e2}")
                 return False
 
+    def _make_url_request(self, req_or_url, timeout=60, headers=None):
+        """
+        Make URL request with automatic SSL fallback for certificate errors.
+
+        Args:
+            req_or_url: Either a urllib.request.Request object or URL string
+            timeout: Request timeout in seconds (default: 60)
+            headers: Optional dict of headers to add (only if req_or_url is string)
+
+        Returns:
+            urllib response object
+
+        Raises:
+            urllib.error.URLError: If both normal and SSL-bypassed requests fail
+        """
+        try:
+            # First attempt with normal SSL verification
+            if isinstance(req_or_url, str):
+                # Create Request object from URL string
+                req = urllib.request.Request(req_or_url)
+                if headers:
+                    for key, value in headers.items():
+                        req.add_header(key, value)
+            else:
+                req = req_or_url
+
+            return urllib.request.urlopen(req, timeout=timeout)
+
+        except (ssl.SSLError, urllib.error.URLError) as ssl_err:
+            # Check if it's an SSL-related error
+            if "SSL" in str(ssl_err) or "CERTIFICATE" in str(ssl_err):
+                print(
+                    f"DEBUG: SSL verification failed, trying with SSL bypass: {ssl_err}"
+                )
+            else:
+                # Not an SSL error, re-raise it
+                raise ssl_err
+
+            # Fallback to unverified SSL if certificate fails
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+
+            try:
+                return urllib.request.urlopen(req, context=ctx, timeout=timeout)
+            except Exception as fallback_err:
+                print(f"DEBUG: SSL bypass also failed: {fallback_err}")
+                raise fallback_err
+
     def _add_to_prompt_history(self, prompt):
         """Add prompt to history, keeping last 10 unique prompts"""
         if not prompt.strip():
@@ -174,10 +223,10 @@ class GimpAIPlugin(Gimp.PlugIn):
         return None
 
     def _get_processing_mode(self):
-        """Determine processing mode based on configured model"""
-        # For now, hardcode GPT-Image-1 = full image mode
-        # Later can read from config for different models
-        return "full_image"  # or "context_extraction"
+        """Determine processing mode based on selection and model"""
+        # Always use context_extraction for proper inpainting behavior
+        # This works for both selective editing and full image transformation
+        return "full_image"  # "context_extraction"
 
     def _show_prompt_dialog(self, title="AI Prompt", default_text=""):
         """Show a GIMP UI dialog to get user input for AI prompt"""
@@ -1901,11 +1950,6 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             req = urllib.request.Request(url, data=body, headers=headers, method="POST")
 
-            # Use unverified SSL context (we know this works from our tests)
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-
             print("DEBUG: Sending real GPT-Image-1 API request...")
 
             # Progress during network operation
@@ -1914,7 +1958,7 @@ class GimpAIPlugin(Gimp.PlugIn):
             Gimp.progress_update(0.65)  # 65% - API request started (after 60% mask)
             Gimp.displays_flush()  # Force UI update before blocking network call
 
-            with urllib.request.urlopen(req, context=ctx, timeout=120) as response:
+            with self._make_url_request(req, timeout=120) as response:
                 # More progress during data reading
                 Gimp.progress_set_text("Processing AI response...")
                 Gimp.progress_update(0.7)  # 70% - Reading response
@@ -1965,7 +2009,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 Gimp.displays_flush()
 
                 # Download from URL
-                with urllib.request.urlopen(image_url, timeout=60) as response:
+                with self._make_url_request(image_url, timeout=60) as response:
                     image_data = response.read()
 
             elif "b64_json" in result_data:
@@ -2246,10 +2290,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 # Download from URL
                 req = urllib.request.Request(image_url)
                 req.add_header("User-Agent", "GIMP-AI-Plugin/1.0")
-                ctx = ssl.create_default_context()
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
-                with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
+                with self._make_url_request(req, timeout=60) as response:
                     image_data = response.read()
 
             elif "b64_json" in result_data:
@@ -2421,8 +2462,7 @@ class GimpAIPlugin(Gimp.PlugIn):
     def do_query_procedures(self):
         return [
             "gimp-ai-inpaint",
-            "gimp-ai-remove",
-            "gimp-ai-enhance",
+            "gimp-ai-layer-generator",
             "gimp-ai-settings",
         ]
 
@@ -2435,27 +2475,11 @@ class GimpAIPlugin(Gimp.PlugIn):
             procedure.add_menu_path("<Image>/Filters/AI/")
             return procedure
 
-        elif name == "gimp-ai-remove":
+        elif name == "gimp-ai-layer-generator":
             procedure = Gimp.ImageProcedure.new(
-                self, name, Gimp.PDBProcType.PLUGIN, self.run_remove, None
+                self, name, Gimp.PDBProcType.PLUGIN, self.run_layer_generator, None
             )
-            procedure.set_menu_label("AI Remove Object")
-            procedure.add_menu_path("<Image>/Filters/AI/")
-            return procedure
-
-        elif name == "gimp-ai-enhance":
-            procedure = Gimp.ImageProcedure.new(
-                self, name, Gimp.PDBProcType.PLUGIN, self.run_enhance, None
-            )
-            procedure.set_menu_label("AI Enhance Image")
-            procedure.add_menu_path("<Image>/Filters/AI/")
-            return procedure
-
-        elif name == "gimp-ai-settings":
-            procedure = Gimp.ImageProcedure.new(
-                self, name, Gimp.PDBProcType.PLUGIN, self.run_settings, None
-            )
-            procedure.set_menu_label("AI Plugin Settings")
+            procedure.set_menu_label("DALL-E 3 Layer Generator")
             procedure.add_menu_path("<Image>/Filters/AI/")
             return procedure
 
@@ -2581,24 +2605,152 @@ class GimpAIPlugin(Gimp.PlugIn):
         Gimp.progress_end()
         return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
 
-    def run_remove(self, procedure, run_mode, image, drawables, config, run_data):
-        Gimp.message("AI Remove Object - Working! (Simplified version)")
-        return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
+    def _generate_dalle3_layer(self, image, prompt, api_key):
+        """Generate a new layer using DALL-E 3"""
+        try:
+            import json
+            import urllib.request
+            import urllib.parse
+            import ssl
 
-    def run_enhance(self, procedure, run_mode, image, drawables, config, run_data):
-        print("DEBUG: AI Enhance Image called!")
+            # DALL-E 3 API endpoint
+            url = "https://api.openai.com/v1/images/generations"
 
-        # Test image access functionality
-        success, message = self._test_image_access(image, drawables)
+            # Prepare the request data
+            data = {
+                "model": "dall-e-3",
+                "prompt": prompt,
+                "n": 1,
+                "size": "1024x1024",
+                "quality": "standard",
+                "response_format": "url",
+            }
 
-        if success:
-            Gimp.message(f"✅ Image Access Test Successful!\n\n{message}")
-            print(f"DEBUG: Image access succeeded: {message}")
-        else:
-            Gimp.message(f"❌ Image Access Failed: {message}")
-            print(f"DEBUG: Image access failed: {message}")
+            # Create the request
+            json_data = json.dumps(data).encode("utf-8")
 
-        return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
+            req = urllib.request.Request(url, data=json_data)
+            req.add_header("Content-Type", "application/json")
+            req.add_header("Authorization", f"Bearer {api_key}")
+
+            print(f"DEBUG: Calling DALL-E 3 API with prompt: {prompt}")
+
+            # Make the API call
+            with self._make_url_request(req) as response:
+                response_data = json.loads(response.read().decode("utf-8"))
+
+            print(f"DEBUG: DALL-E 3 API response received")
+
+            # Extract the image URL
+            if "data" in response_data and len(response_data["data"]) > 0:
+                image_url = response_data["data"][0]["url"]
+                print(f"DEBUG: Image URL: {image_url}")
+
+                # Download and add the image as a new layer
+                return self._download_and_add_layer(image, image_url)
+            else:
+                print("ERROR: No image data in API response")
+                return False
+
+        except Exception as e:
+            print(f"ERROR: DALL-E 3 API call failed: {str(e)}")
+            return False
+
+    def _download_and_add_layer(self, image, image_url):
+        """Download image from URL and add as new layer"""
+        try:
+            import urllib.request
+            import tempfile
+            import os
+            import ssl
+
+            # Download the image to a temporary file
+            with self._make_url_request(image_url) as response:
+                image_data = response.read()
+
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
+                temp_file.write(image_data)
+                temp_file_path = temp_file.name
+
+            print(f"DEBUG: Downloaded image to: {temp_file_path}")
+
+            try:
+                # Load the image as a new layer
+                loaded_image = Gimp.file_load(
+                    Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(temp_file_path)
+                )
+                source_layer = loaded_image.get_layers()[0]
+
+                # Copy the layer to the current image
+                new_layer = Gimp.Layer.new_from_drawable(source_layer, image)
+                new_layer.set_name("DALL-E 3 Generated")
+
+                # Add the layer to the image
+                image.insert_layer(new_layer, None, 0)
+
+                # Clean up
+                loaded_image.delete()
+
+                print("DEBUG: Successfully added DALL-E 3 layer")
+                return True
+
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_file_path)
+                except:
+                    pass
+
+        except Exception as e:
+            print(f"ERROR: Failed to download and add layer: {str(e)}")
+            return False
+
+    def run_layer_generator(
+        self, procedure, run_mode, image, drawables, config, run_data
+    ):
+        print("DEBUG: DALL-E 3 Layer Generator called!")
+
+        # Get the API key
+        api_key = self._get_api_key()
+        if not api_key:
+            Gimp.message(
+                "❌ OpenAI API key not configured. Please run AI Plugin Settings first."
+            )
+            return procedure.new_return_values(
+                Gimp.PDBStatusType.EXECUTION_ERROR, GLib.Error()
+            )
+
+        # Show prompt dialog
+        prompt = self._show_prompt_dialog(
+            "DALL-E 3 Layer Generator", self._get_last_prompt()
+        )
+        if not prompt:
+            return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
+
+        # Add to prompt history
+        self._add_to_prompt_history(prompt)
+
+        try:
+            # Create new layer with DALL-E 3 generated image
+            result = self._generate_dalle3_layer(image, prompt, api_key)
+            if result:
+                Gimp.message("✅ DALL-E 3 layer generated successfully!")
+                return procedure.new_return_values(
+                    Gimp.PDBStatusType.SUCCESS, GLib.Error()
+                )
+            else:
+                Gimp.message("❌ Failed to generate DALL-E 3 layer")
+                return procedure.new_return_values(
+                    Gimp.PDBStatusType.EXECUTION_ERROR, GLib.Error()
+                )
+        except Exception as e:
+            error_msg = f"Error generating DALL-E 3 layer: {str(e)}"
+            print(f"ERROR: {error_msg}")
+            Gimp.message(f"❌ {error_msg}")
+            return procedure.new_return_values(
+                Gimp.PDBStatusType.EXECUTION_ERROR, GLib.Error()
+            )
 
     def run_settings(self, procedure, run_mode, image, drawables, config, run_data):
         print("DEBUG: Testing HTTP functionality...")
