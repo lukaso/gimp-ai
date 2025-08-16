@@ -230,7 +230,7 @@ class GimpAIPlugin(Gimp.PlugIn):
         # Fallback to last used mode from config
         return self.config.get("last_mode", "contextual")
 
-    def _show_prompt_dialog(self, title="AI Prompt", default_text=""):
+    def _show_prompt_dialog(self, title="AI Prompt", default_text="", show_mode_selection=True):
         """Show a GIMP UI dialog to get user input for AI prompt"""
         # Use last prompt as default if available, otherwise use provided default
         if not default_text:
@@ -275,6 +275,41 @@ class GimpAIPlugin(Gimp.PlugIn):
             label.set_halign(Gtk.Align.START)
             content_area.pack_start(label, False, False, 0)
 
+            # Check API key and show warning if missing
+            api_key = self._get_api_key()
+            api_warning_bar = None
+            
+            if not api_key:
+                # Create warning info bar
+                api_warning_bar = Gtk.InfoBar()
+                api_warning_bar.set_message_type(Gtk.MessageType.WARNING)
+                api_warning_bar.set_show_close_button(False)
+                
+                # Warning message
+                warning_label = Gtk.Label()
+                warning_label.set_markup("⚠️ OpenAI API key not configured")
+                warning_label.set_halign(Gtk.Align.START)
+                
+                # Configure button - connect to main dialog response
+                configure_button = api_warning_bar.add_button("Configure Now", Gtk.ResponseType.APPLY)
+                
+                # Connect the InfoBar response to the main dialog
+                def on_configure_clicked(infobar, response_id):
+                    if response_id == Gtk.ResponseType.APPLY:
+                        dialog.response(Gtk.ResponseType.APPLY)
+                
+                api_warning_bar.connect("response", on_configure_clicked)
+                
+                # Add label to info bar content area
+                info_content = api_warning_bar.get_content_area()
+                info_content.pack_start(warning_label, False, False, 0)
+                
+                content_area.pack_start(api_warning_bar, False, False, 5)
+                
+                # Disable OK button when no API key
+                ok_button.set_sensitive(False)
+                ok_button.set_label("Configure & Continue")
+
             # Prompt history dropdown
             history = self._get_prompt_history()
             history_combo = None
@@ -310,41 +345,44 @@ class GimpAIPlugin(Gimp.PlugIn):
             scrolled_window.add(text_view)
             content_area.pack_start(scrolled_window, True, True, 0)
 
-            # Add mode selection
-            mode_frame = Gtk.Frame(label="Processing Mode:")
-            mode_frame.set_margin_top(10)
-            content_area.pack_start(mode_frame, False, False, 0)
+            # Add mode selection (only for inpainting)
+            focused_radio = None
+            full_radio = None
+            if show_mode_selection:
+                mode_frame = Gtk.Frame(label="Processing Mode:")
+                mode_frame.set_margin_top(10)
+                content_area.pack_start(mode_frame, False, False, 0)
 
-            mode_box = Gtk.VBox()
-            mode_box.set_margin_left(10)
-            mode_box.set_margin_right(10)
-            mode_box.set_margin_top(5)
-            mode_box.set_margin_bottom(10)
-            mode_frame.add(mode_box)
+                mode_box = Gtk.VBox()
+                mode_box.set_margin_left(10)
+                mode_box.set_margin_right(10)
+                mode_box.set_margin_top(5)
+                mode_box.set_margin_bottom(10)
+                mode_frame.add(mode_box)
 
-            # Get last used mode from config
-            config = self._load_config()
-            last_mode = config.get("last_mode", "contextual")
+                # Get last used mode from config
+                config = self._load_config()
+                last_mode = config.get("last_mode", "contextual")
 
-            # Radio buttons for mode selection
-            focused_radio = Gtk.RadioButton.new_with_label(
-                None, "Focused (High Detail) - Best for small edits, maximum resolution"
-            )
-            focused_radio.set_name("contextual")
-            mode_box.pack_start(focused_radio, False, False, 2)
+                # Radio buttons for mode selection
+                focused_radio = Gtk.RadioButton.new_with_label(
+                    None, "Focused (High Detail) - Best for small edits, maximum resolution"
+                )
+                focused_radio.set_name("contextual")
+                mode_box.pack_start(focused_radio, False, False, 2)
 
-            full_radio = Gtk.RadioButton.new_with_label_from_widget(
-                focused_radio,
-                "Full Image (Consistent) - Best for large changes, visual consistency",
-            )
-            full_radio.set_name("full_image")
-            mode_box.pack_start(full_radio, False, False, 2)
+                full_radio = Gtk.RadioButton.new_with_label_from_widget(
+                    focused_radio,
+                    "Full Image (Consistent) - Best for large changes, visual consistency",
+                )
+                full_radio.set_name("full_image")
+                mode_box.pack_start(full_radio, False, False, 2)
 
-            # Set active radio based on last used mode
-            if last_mode == "full_image":
-                full_radio.set_active(True)
-            else:
-                focused_radio.set_active(True)
+                # Set active radio based on last used mode
+                if last_mode == "full_image":
+                    full_radio.set_active(True)
+                else:
+                    focused_radio.set_active(True)
 
             # Connect Enter to activate OK button, Shift+Enter for new line
             def on_key_press(widget, event):
@@ -393,6 +431,26 @@ class GimpAIPlugin(Gimp.PlugIn):
                 print(f"DEBUG: Dialog response: {response}")
 
                 if response == Gtk.ResponseType.OK:
+                    # First check if API key is configured (for "Configure & Continue" button)
+                    current_api_key = self._get_api_key()
+                    if not current_api_key:
+                        print("DEBUG: OK clicked but no API key, opening settings")
+                        self._show_settings_dialog(dialog)
+                        
+                        # Re-check API key after settings dialog
+                        current_api_key = self._get_api_key()
+                        if current_api_key:
+                            # API key now configured - update UI
+                            if api_warning_bar:
+                                api_warning_bar.hide()
+                            ok_button.set_sensitive(True)
+                            ok_button.set_label("OK")
+                            print("DEBUG: API key configured, enabled OK button")
+                        else:
+                            print("DEBUG: API key still not configured")
+                            continue  # Keep dialog open
+                    
+                    # Now validate the prompt
                     start_iter = text_buffer.get_start_iter()
                     end_iter = text_buffer.get_end_iter()
                     prompt = text_buffer.get_text(start_iter, end_iter, False).strip()
@@ -424,10 +482,11 @@ class GimpAIPlugin(Gimp.PlugIn):
 
                     # Get selected mode
                     selected_mode = "contextual"  # default
-                    if full_radio.get_active():
+                    if show_mode_selection and full_radio and full_radio.get_active():
                         selected_mode = "full_image"
-                    elif focused_radio.get_active():
+                    elif show_mode_selection and focused_radio and focused_radio.get_active():
                         selected_mode = "contextual"
+                    # If no mode selection UI, use default "contextual" (for image generator)
 
                     print(
                         f"DEBUG: Got prompt text: '{prompt}', mode: '{selected_mode}', destroying dialog..."
@@ -442,6 +501,22 @@ class GimpAIPlugin(Gimp.PlugIn):
                         self._save_config()
 
                     return (prompt, selected_mode) if prompt else None
+                elif response == Gtk.ResponseType.APPLY:  # Configure Now button
+                    print("DEBUG: Configure Now button clicked")
+                    self._show_settings_dialog(dialog)
+                    
+                    # Re-check API key after settings dialog
+                    api_key = self._get_api_key()
+                    if api_key:
+                        # API key now configured - update UI
+                        if api_warning_bar:
+                            api_warning_bar.hide()
+                        ok_button.set_sensitive(True)
+                        ok_button.set_label("OK")
+                        print("DEBUG: API key configured, enabled OK button")
+                    else:
+                        print("DEBUG: API key still not configured")
+                    # Continue loop to keep main dialog open
                 elif response == Gtk.ResponseType.HELP:  # Settings button
                     print("DEBUG: Settings button clicked")
                     self._show_settings_dialog(dialog)
@@ -3076,19 +3151,9 @@ class GimpAIPlugin(Gimp.PlugIn):
     ):
         print("DEBUG: Image Generator called!")
 
-        # Get the API key
-        api_key = self._get_api_key()
-        if not api_key:
-            Gimp.message(
-                "❌ OpenAI API key not configured. Please run AI Plugin Settings first."
-            )
-            return procedure.new_return_values(
-                Gimp.PDBStatusType.EXECUTION_ERROR, GLib.Error()
-            )
-
-        # Show prompt dialog (layer generator doesn't need mode selection, so extract just prompt)
+        # Show prompt dialog with API key checking (no mode selection for image generator)
         dialog_result = self._show_prompt_dialog(
-            "Image Generator", self._get_last_prompt()
+            "Image Generator", self._get_last_prompt(), show_mode_selection=False
         )
         if not dialog_result:
             prompt = None
@@ -3099,6 +3164,14 @@ class GimpAIPlugin(Gimp.PlugIn):
 
         if not prompt:
             return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
+
+        # Get API key (should be available since dialog handles API key checking)
+        api_key = self._get_api_key()
+        if not api_key:
+            Gimp.message("❌ API key not available")
+            return procedure.new_return_values(
+                Gimp.PDBStatusType.EXECUTION_ERROR, GLib.Error()
+            )
 
         # Add to prompt history
         self._add_to_prompt_history(prompt)
