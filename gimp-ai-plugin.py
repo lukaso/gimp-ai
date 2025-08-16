@@ -226,7 +226,7 @@ class GimpAIPlugin(Gimp.PlugIn):
         """Determine processing mode based on dialog selection or fallback to config"""
         if dialog_mode:
             return dialog_mode
-        
+
         # Fallback to last used mode from config
         return self.config.get("last_mode", "contextual")
 
@@ -314,27 +314,32 @@ class GimpAIPlugin(Gimp.PlugIn):
             mode_frame = Gtk.Frame(label="Processing Mode:")
             mode_frame.set_margin_top(10)
             content_area.pack_start(mode_frame, False, False, 0)
-            
+
             mode_box = Gtk.VBox()
             mode_box.set_margin_left(10)
             mode_box.set_margin_right(10)
             mode_box.set_margin_top(5)
             mode_box.set_margin_bottom(10)
             mode_frame.add(mode_box)
-            
+
             # Get last used mode from config
             config = self._load_config()
             last_mode = config.get("last_mode", "contextual")
-            
+
             # Radio buttons for mode selection
-            focused_radio = Gtk.RadioButton.new_with_label(None, "Focused (High Detail) - Best for small edits, maximum resolution")
-            focused_radio.set_name("contextual")
-            mode_box.pack_start(focused_radio, False, False, 2)
-            
-            full_radio = Gtk.RadioButton.new_with_label_from_widget(focused_radio, "Full Image (Consistent) - Best for large changes, visual consistency")
+            full_radio = Gtk.RadioButton.new_with_label_from_widget(
+                focused_radio,
+                "Full Image (Consistent) - Best for large changes, visual consistency",
+            )
             full_radio.set_name("full_image")
             mode_box.pack_start(full_radio, False, False, 2)
-            
+
+            focused_radio = Gtk.RadioButton.new_with_label(
+                None, "Focused (High Detail) - Best for small edits, maximum resolution"
+            )
+            focused_radio.set_name("contextual")
+            mode_box.pack_start(focused_radio, False, False, 2)
+
             # Set active radio based on last used mode
             if last_mode == "full_image":
                 full_radio.set_active(True)
@@ -391,24 +396,26 @@ class GimpAIPlugin(Gimp.PlugIn):
                     start_iter = text_buffer.get_start_iter()
                     end_iter = text_buffer.get_end_iter()
                     prompt = text_buffer.get_text(start_iter, end_iter, False).strip()
-                    
+
                     # Get selected mode
                     selected_mode = "contextual"  # default
                     if full_radio.get_active():
                         selected_mode = "full_image"
                     elif focused_radio.get_active():
                         selected_mode = "contextual"
-                    
-                    print(f"DEBUG: Got prompt text: '{prompt}', mode: '{selected_mode}', destroying dialog...")
+
+                    print(
+                        f"DEBUG: Got prompt text: '{prompt}', mode: '{selected_mode}', destroying dialog..."
+                    )
                     dialog.destroy()
                     print("DEBUG: Dialog destroyed, returning prompt and mode")
-                    
+
                     if prompt:
                         self._add_to_prompt_history(prompt)
                         # Save the selected mode to config
                         self.config["last_mode"] = selected_mode
                         self._save_config()
-                        
+
                     return (prompt, selected_mode) if prompt else None
                 elif response == Gtk.ResponseType.HELP:  # Settings button
                     print("DEBUG: Settings button clicked")
@@ -1458,7 +1465,7 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             mask_image.insert_layer(mask_layer, None, 0)
 
-            # Fill with black background (preserve all areas initially) 
+            # Fill with black background (preserve all areas initially)
             from gi.repository import Gegl
 
             black_color = Gegl.Color.new("black")
@@ -1468,9 +1475,11 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             # Force layer update to make sure black fill is committed
             mask_layer.update(0, 0, ctx_size, ctx_size)
-            
+
             # Explicitly ensure extension areas stay black by filling the entire context square
-            print(f"DEBUG: Ensuring all extension areas are black in {ctx_size}x{ctx_size} mask")
+            print(
+                f"DEBUG: Ensuring all extension areas are black in {ctx_size}x{ctx_size} mask"
+            )
 
             # Step 3: Copy only the original image area, leave extended context white
 
@@ -1534,7 +1543,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 output = graph.create_child("gegl:write-buffer")
                 output.set_property("buffer", mask_shadow_buffer)
 
-                # Link the processing chain: 
+                # Link the processing chain:
                 # mask_source (black bg) + translated_selection → composite → output
                 selection_source.link(translate)
                 mask_source.link(composite)
@@ -1667,188 +1676,208 @@ class GimpAIPlugin(Gimp.PlugIn):
         """Apply smart feathering to mask edges for better blending while preserving selection size"""
         try:
             print("DEBUG: Applying smart mask feathering for enhanced edge blending")
-            
+
             from gi.repository import Gegl
-            
+
             # Get mask dimensions and buffer
             mask_width = mask.get_width()
             mask_height = mask.get_height()
             mask_buffer = mask.get_buffer()
             shadow_buffer = mask.get_shadow_buffer()
-            
+
             print(f"DEBUG: Processing mask {mask_width}x{mask_height}")
-            
-            # Simplified approach: Apply graduated gaussian blur 
+
+            # Simplified approach: Apply graduated gaussian blur
             # This softens edges without changing the overall selection area
             graph = Gegl.Node()
-            
+
             # Source: Current mask buffer
             source = graph.create_child("gegl:buffer-source")
             source.set_property("buffer", mask_buffer)
-            
+
             # Apply moderate gaussian blur to soften edges
             # Use smaller blur to maintain selection size while softening transitions
             blur = graph.create_child("gegl:gaussian-blur")
             blur.set_property("std-dev-x", 4.0)  # Moderate blur for edge softening
             blur.set_property("std-dev-y", 4.0)
-            
+
             # Output to shadow buffer
             output = graph.create_child("gegl:write-buffer")
             output.set_property("buffer", shadow_buffer)
-            
+
             # Link the chain: source -> blur -> output
             source.link(blur)
             blur.link(output)
-            
+
             # Process the graph
             print("DEBUG: Processing edge feathering...")
             output.process()
-            
+
             # Merge changes
             shadow_buffer.flush()
             mask.merge_shadow(True)
             mask.update(0, 0, mask_width, mask_height)
-            
-            print("DEBUG: Smart edge feathering applied - edges softened while preserving selection area")
-            
+
+            print(
+                "DEBUG: Smart edge feathering applied - edges softened while preserving selection area"
+            )
+
         except Exception as e:
             print(f"DEBUG: Smart mask feathering failed (using simple feathering): {e}")
             # Fallback: apply light gaussian blur to entire mask
             try:
                 from gi.repository import Gegl
-                
+
                 mask_buffer = mask.get_buffer()
                 shadow_buffer = mask.get_shadow_buffer()
-                
+
                 # Simple fallback: light gaussian blur on entire mask
                 graph = Gegl.Node()
-                
+
                 source = graph.create_child("gegl:buffer-source")
                 source.set_property("buffer", mask_buffer)
-                
+
                 blur = graph.create_child("gegl:gaussian-blur")
                 blur.set_property("std-dev-x", 2.0)
                 blur.set_property("std-dev-y", 2.0)
-                
+
                 output = graph.create_child("gegl:write-buffer")
                 output.set_property("buffer", shadow_buffer)
-                
+
                 source.link(blur)
                 blur.link(output)
                 output.process()
-                
+
                 shadow_buffer.flush()
                 mask.merge_shadow(True)
                 mask.update(0, 0, mask.get_width(), mask.get_height())
-                
+
                 print("DEBUG: Applied fallback simple feathering")
-                
+
             except Exception as e2:
-                print(f"DEBUG: Both smart and simple feathering failed, using original mask: {e2}")
+                print(
+                    f"DEBUG: Both smart and simple feathering failed, using original mask: {e2}"
+                )
 
     def _sample_boundary_colors(self, image, context_info):
         """Sample colors around selection boundary for color matching"""
         try:
             print("DEBUG: Sampling boundary colors for color matching")
-            
+
             if not context_info.get("has_selection", False):
                 return None
-                
+
             # Get selection bounds
             sel_x1, sel_y1, sel_x2, sel_y2 = context_info["selection_bounds"]
-            
+
             # Sample from a ring around the selection edge
             # Inner ring: just inside selection
-            # Outer ring: just outside selection  
+            # Outer ring: just outside selection
             sample_width = min(10, (sel_x2 - sel_x1) // 10)  # Adaptive sample width
-            
+
             # Get the flattened image for color sampling
             merged_layer = None
             try:
                 # Create a temporary flattened copy for sampling
                 temp_image = image.duplicate()
                 merged_layer = temp_image.flatten()
-                
+
                 # Sample colors using GEGL buffer operations
                 from gi.repository import Gegl
-                
+
                 layer_buffer = merged_layer.get_buffer()
-                
+
                 # Sample pixels around selection boundary
                 inner_samples = []
                 outer_samples = []
-                
+
                 # Sample points along the selection perimeter
                 sample_points = 20  # Number of sample points
-                
+
                 for i in range(sample_points):
                     # Calculate position along selection perimeter
                     t = i / sample_points
-                    
+
                     # Sample along top and bottom edges
                     if i < sample_points // 2:
                         x = int(sel_x1 + t * 2 * (sel_x2 - sel_x1))
                         y_inner = sel_y1 + sample_width // 2
                         y_outer = sel_y1 - sample_width // 2
                     else:
-                        x = int(sel_x2 - (t - 0.5) * 2 * (sel_x2 - sel_x1))  
+                        x = int(sel_x2 - (t - 0.5) * 2 * (sel_x2 - sel_x1))
                         y_inner = sel_y2 - sample_width // 2
                         y_outer = sel_y2 + sample_width // 2
-                    
+
                     # Ensure coordinates are within image bounds
                     x = max(0, min(x, image.get_width() - 1))
                     y_inner = max(0, min(y_inner, image.get_height() - 1))
                     y_outer = max(0, min(y_outer, image.get_height() - 1))
-                    
+
                     try:
                         # Sample inner color (inside selection)
                         inner_rect = Gegl.Rectangle.new(x, y_inner, 1, 1)
-                        inner_pixel = layer_buffer.get(inner_rect, 1.0, "R'G'B'A u8", Gegl.AbyssPolicy.CLAMP)
+                        inner_pixel = layer_buffer.get(
+                            inner_rect, 1.0, "R'G'B'A u8", Gegl.AbyssPolicy.CLAMP
+                        )
                         if len(inner_pixel) >= 3:
-                            inner_samples.append((inner_pixel[0], inner_pixel[1], inner_pixel[2]))
-                        
-                        # Sample outer color (outside selection)  
+                            inner_samples.append(
+                                (inner_pixel[0], inner_pixel[1], inner_pixel[2])
+                            )
+
+                        # Sample outer color (outside selection)
                         outer_rect = Gegl.Rectangle.new(x, y_outer, 1, 1)
-                        outer_pixel = layer_buffer.get(outer_rect, 1.0, "R'G'B'A u8", Gegl.AbyssPolicy.CLAMP)
+                        outer_pixel = layer_buffer.get(
+                            outer_rect, 1.0, "R'G'B'A u8", Gegl.AbyssPolicy.CLAMP
+                        )
                         if len(outer_pixel) >= 3:
-                            outer_samples.append((outer_pixel[0], outer_pixel[1], outer_pixel[2]))
-                            
+                            outer_samples.append(
+                                (outer_pixel[0], outer_pixel[1], outer_pixel[2])
+                            )
+
                     except Exception as sample_e:
                         print(f"DEBUG: Sample point {i} failed: {sample_e}")
                         continue
-                
+
                 # Calculate average colors
                 if inner_samples and outer_samples:
                     # Calculate averages
-                    inner_avg = tuple(sum(channel) // len(inner_samples) for channel in zip(*inner_samples))
-                    outer_avg = tuple(sum(channel) // len(outer_samples) for channel in zip(*outer_samples))
-                    
+                    inner_avg = tuple(
+                        sum(channel) // len(inner_samples)
+                        for channel in zip(*inner_samples)
+                    )
+                    outer_avg = tuple(
+                        sum(channel) // len(outer_samples)
+                        for channel in zip(*outer_samples)
+                    )
+
                     # Calculate differences for color correction
                     hue_diff = 0  # Simplified - could calculate actual hue difference
                     brightness_diff = (sum(outer_avg) // 3) - (sum(inner_avg) // 3)
-                    
+
                     color_info = {
                         "inner_avg": inner_avg,
-                        "outer_avg": outer_avg, 
+                        "outer_avg": outer_avg,
                         "brightness_diff": brightness_diff,
-                        "hue_diff": hue_diff
+                        "hue_diff": hue_diff,
                     }
-                    
-                    print(f"DEBUG: Sampled colors - Inner: {inner_avg}, Outer: {outer_avg}")
+
+                    print(
+                        f"DEBUG: Sampled colors - Inner: {inner_avg}, Outer: {outer_avg}"
+                    )
                     print(f"DEBUG: Brightness difference: {brightness_diff}")
-                    
+
                     return color_info
                 else:
                     print("DEBUG: No valid color samples collected")
                     return None
-                    
+
             finally:
                 # Clean up temporary image
-                if merged_layer and hasattr(merged_layer, 'get_image'):
+                if merged_layer and hasattr(merged_layer, "get_image"):
                     temp_image = merged_layer.get_image()
                     if temp_image:
                         temp_image.delete()
-                        
+
         except Exception as e:
             print(f"DEBUG: Color sampling failed: {e}")
             return None
@@ -1858,62 +1887,66 @@ class GimpAIPlugin(Gimp.PlugIn):
         if not color_info:
             print("DEBUG: No color info available - skipping color matching")
             return
-            
+
         try:
             print("DEBUG: Applying color matching based on boundary samples")
-            
+
             from gi.repository import Gegl
-            
+
             # Get layer buffer
             layer_buffer = result_layer.get_buffer()
             shadow_buffer = result_layer.get_shadow_buffer()
-            
+
             # Create color correction graph
             graph = Gegl.Node()
-            
+
             # Source buffer
             source = graph.create_child("gegl:buffer-source")
             source.set_property("buffer", layer_buffer)
-            
+
             # Apply brightness/levels adjustment if significant difference
             brightness_diff = color_info.get("brightness_diff", 0)
             if abs(brightness_diff) > 10:  # Only apply if difference is noticeable
                 levels = graph.create_child("gegl:levels")
-                
+
                 # Adjust gamma based on brightness difference
                 gamma_adjust = 1.0 + (brightness_diff / 255.0)
                 gamma_adjust = max(0.5, min(2.0, gamma_adjust))  # Clamp gamma
-                
+
                 levels.set_property("in-low", 0.0)
                 levels.set_property("in-high", 1.0)
                 levels.set_property("gamma", gamma_adjust)
                 levels.set_property("out-low", 0.0)
                 levels.set_property("out-high", 1.0)
-                
+
                 source.link(levels)
                 current_node = levels
-                
+
                 print(f"DEBUG: Applied gamma correction: {gamma_adjust}")
             else:
                 current_node = source
-                print("DEBUG: No significant brightness difference - skipping levels adjustment")
-            
+                print(
+                    "DEBUG: No significant brightness difference - skipping levels adjustment"
+                )
+
             # Output buffer
             output = graph.create_child("gegl:write-buffer")
             output.set_property("buffer", shadow_buffer)
-            
+
             current_node.link(output)
-            
+
             # Process color correction
             output.process()
-            
+
             # Merge changes
             shadow_buffer.flush()
             result_layer.merge_shadow(True)
-            result_layer.update(0, 0, result_layer.get_width(), result_layer.get_height())
-            
+            result_layer.update(
+                0, 0, result_layer.get_width(), result_layer.get_height()
+            )
+
             print("DEBUG: Color matching applied successfully")
-            
+
         except Exception as e:
             print(f"DEBUG: Color matching failed: {e}")
 
@@ -2190,7 +2223,9 @@ class GimpAIPlugin(Gimp.PlugIn):
             print(f"DEBUG: GPT-Image-1 API call failed: {e}")
             return False, f"GPT-Image-1 API call failed: {str(e)}", None
 
-    def _download_and_composite_result(self, image, api_response, context_info, mode, color_info=None):
+    def _download_and_composite_result(
+        self, image, api_response, context_info, mode, color_info=None
+    ):
         """Download AI result and composite it back to original image with proper masking"""
         try:
             print("DEBUG: Downloading and compositing AI result")
@@ -2419,12 +2454,12 @@ class GimpAIPlugin(Gimp.PlugIn):
                     print(
                         "DEBUG: Creating selection-based mask for contextual mode while preserving full AI result in layer"
                     )
-                    
+
                     # Use GIMP's built-in selection mask type to automatically create properly shaped mask
                     # This preserves the full AI content in the layer but masks visibility to selection area
                     mask = result_layer.create_mask(Gimp.AddMaskType.SELECTION)
                     result_layer.add_mask(mask)
-                    
+
                     # Apply smart feathering to the mask for better blending
                     self._apply_smart_mask_feathering(mask, image)
 
@@ -2435,7 +2470,9 @@ class GimpAIPlugin(Gimp.PlugIn):
                         "DEBUG: Core subject preserved at 100%, edges feathered for seamless integration"
                     )
                 else:
-                    print("DEBUG: No selection or full_image mode - layer shows full AI result without mask")
+                    print(
+                        "DEBUG: No selection or full_image mode - layer shows full AI result without mask"
+                    )
 
                 # VALIDATION CHECKS
                 print(f"DEBUG: === SIMPLIFIED ALIGNMENT VALIDATION ===")
@@ -2731,7 +2768,7 @@ class GimpAIPlugin(Gimp.PlugIn):
         if not dialog_result:
             print("DEBUG: User cancelled prompt dialog")
             return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
-        
+
         # Extract prompt and mode from dialog result
         prompt, selected_mode = dialog_result
         print(f"DEBUG: Extracted prompt: '{prompt}', mode: '{selected_mode}'")
@@ -2781,7 +2818,7 @@ class GimpAIPlugin(Gimp.PlugIn):
         if mode == "contextual" and context_info.get("has_selection", False):
             print("DEBUG: Sampling boundary colors for color matching...")
             color_info = self._sample_boundary_colors(image, context_info)
-        
+
         # Step 5: Extract context region with padding (works for both modes)
         print("DEBUG: Extracting context region...")
         success, message, image_data = self._extract_context_region(image, context_info)
@@ -3025,14 +3062,16 @@ class GimpAIPlugin(Gimp.PlugIn):
             )
 
         # Show prompt dialog (layer generator doesn't need mode selection, so extract just prompt)
-        dialog_result = self._show_prompt_dialog("Image Generator", self._get_last_prompt())
+        dialog_result = self._show_prompt_dialog(
+            "Image Generator", self._get_last_prompt()
+        )
         if not dialog_result:
             prompt = None
         elif isinstance(dialog_result, tuple):
             prompt, _ = dialog_result  # Ignore mode for layer generator
         else:
             prompt = dialog_result  # Backwards compatibility
-        
+
         if not prompt:
             return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
 
