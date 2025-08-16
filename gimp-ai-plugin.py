@@ -327,18 +327,18 @@ class GimpAIPlugin(Gimp.PlugIn):
             last_mode = config.get("last_mode", "contextual")
 
             # Radio buttons for mode selection
+            focused_radio = Gtk.RadioButton.new_with_label(
+                None, "Focused (High Detail) - Best for small edits, maximum resolution"
+            )
+            focused_radio.set_name("contextual")
+            mode_box.pack_start(focused_radio, False, False, 2)
+
             full_radio = Gtk.RadioButton.new_with_label_from_widget(
                 focused_radio,
                 "Full Image (Consistent) - Best for large changes, visual consistency",
             )
             full_radio.set_name("full_image")
             mode_box.pack_start(full_radio, False, False, 2)
-
-            focused_radio = Gtk.RadioButton.new_with_label(
-                None, "Focused (High Detail) - Best for small edits, maximum resolution"
-            )
-            focused_radio.set_name("contextual")
-            mode_box.pack_start(focused_radio, False, False, 2)
 
             # Set active radio based on last used mode
             if last_mode == "full_image":
@@ -396,6 +396,31 @@ class GimpAIPlugin(Gimp.PlugIn):
                     start_iter = text_buffer.get_start_iter()
                     end_iter = text_buffer.get_end_iter()
                     prompt = text_buffer.get_text(start_iter, end_iter, False).strip()
+
+                    # Check if user entered actual content (not just placeholder)
+                    placeholder_texts = [
+                        "Describe what you want to generate...",
+                        "Describe the area to inpaint (e.g. 'remove object', 'fix background')",
+                        default_text,  # In case default_text is a placeholder
+                    ]
+
+                    is_placeholder = prompt in placeholder_texts or not prompt
+
+                    if is_placeholder:
+                        # Show error message and keep dialog open
+                        error_dialog = Gtk.MessageDialog(
+                            parent=dialog,
+                            flags=Gtk.DialogFlags.MODAL,
+                            message_type=Gtk.MessageType.WARNING,
+                            buttons=Gtk.ButtonsType.OK,
+                            text="Please enter a prompt description",
+                        )
+                        error_dialog.format_secondary_text(
+                            "You need to describe what you want to generate or change before proceeding."
+                        )
+                        error_dialog.run()
+                        error_dialog.destroy()
+                        continue  # Keep the main dialog open
 
                     # Get selected mode
                     selected_mode = "contextual"  # default
