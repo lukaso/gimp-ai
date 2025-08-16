@@ -224,9 +224,9 @@ class GimpAIPlugin(Gimp.PlugIn):
 
     def _get_processing_mode(self):
         """Determine processing mode based on selection and model"""
-        # Always use context_extraction for proper inpainting behavior
-        # This works for both selective editing and full image transformation
-        return "full_image"  # "context_extraction"
+        # Default to contextual inpainting for selections
+        # This can be extended to support different modes based on user preference
+        return "contextual"  # "full_image" for full image mode
 
     def _show_prompt_dialog(self, title="AI Prompt", default_text=""):
         """Show a GIMP UI dialog to get user input for AI prompt"""
@@ -1279,38 +1279,40 @@ class GimpAIPlugin(Gimp.PlugIn):
                 f"DEBUG: Scaled selection: ({scaled_sel_x1},{scaled_sel_y1}) to ({scaled_sel_x2},{scaled_sel_y2})"
             )
 
-            # Create mask image
+            # Create mask image (RGBA for transparency)
             mask_image = Gimp.Image.new(
-                target_width, target_height, Gimp.ImageType.GRAY
+                target_width, target_height, Gimp.ImageBaseType.RGB
             )
             mask_layer = Gimp.Layer.new(
                 mask_image,
                 "mask",
                 target_width,
                 target_height,
-                Gimp.ImageType.GRAY,
+                Gimp.ImageType.RGBA_IMAGE,
                 100.0,
                 Gimp.LayerMode.NORMAL,
             )
             mask_image.insert_layer(mask_layer, None, 0)
 
-            # Fill with white (preserve areas)
+            # Fill with opaque white (preserve areas)
             from gi.repository import Gegl
 
             white_color = Gegl.Color.new("white")
             mask_layer.get_shadow_buffer().clear(white_color)
 
-            # Create black rectangle for selection area (transform area)
-            black_color = Gegl.Color.new("black")
+            # Create transparent rectangle for selection area (inpaint area)
+            # For RGBA transparency, we need to use a specific transparent color
+            transparent_color = Gegl.Color()
+            transparent_color.set_rgba(0.0, 0.0, 0.0, 0.0)  # Transparent black
             mask_buffer = mask_layer.get_shadow_buffer()
 
-            # Fill selection rectangle with black
+            # Fill selection rectangle with transparency
             width = scaled_sel_x2 - scaled_sel_x1
             height = scaled_sel_y2 - scaled_sel_y1
             if width > 0 and height > 0:
                 # Simple rectangle mask for now
                 rect = Gegl.Rectangle.new(scaled_sel_x1, scaled_sel_y1, width, height)
-                mask_buffer.set_color(rect, black_color)
+                mask_buffer.set_color(rect, transparent_color)
 
             # Merge shadow buffer with base layer
             mask_layer.merge_shadow(True)
@@ -1359,7 +1361,9 @@ class GimpAIPlugin(Gimp.PlugIn):
             import io
             from PIL import Image
 
-            mask_img = Image.new("L", context_info["scaled_size"], 255)  # White mask
+            mask_img = Image.new(
+                "RGBA", context_info["scaled_size"], (255, 255, 255, 255)
+            )  # Opaque white mask
             mask_bytes = io.BytesIO()
             mask_img.save(mask_bytes, format="PNG")
             return mask_bytes.getvalue()
@@ -1386,8 +1390,8 @@ class GimpAIPlugin(Gimp.PlugIn):
                 raise Exception("Failed to save selection as channel")
             print("DEBUG: Saved selection as channel for pixel copying")
 
-            # Step 2: Create context-sized mask image (grayscale)
-            mask_image = Gimp.Image.new(ctx_size, ctx_size, Gimp.ImageBaseType.GRAY)
+            # Step 2: Create context-sized mask image (RGBA for transparency)
+            mask_image = Gimp.Image.new(ctx_size, ctx_size, Gimp.ImageBaseType.RGB)
             if not mask_image:
                 image.remove_channel(selection_channel)
                 raise Exception("Failed to create mask image")
@@ -1397,7 +1401,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 "selection_mask",
                 ctx_size,
                 ctx_size,
-                Gimp.ImageType.GRAY_IMAGE,
+                Gimp.ImageType.RGBA_IMAGE,
                 100.0,
                 Gimp.LayerMode.NORMAL,
             )
@@ -1408,16 +1412,19 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             mask_image.insert_layer(mask_layer, None, 0)
 
-            # Fill with white (preserve context areas that extend beyond original image)
+            # Fill with black background (preserve all areas initially) 
             from gi.repository import Gegl
 
-            white_color = Gegl.Color.new("white")
-            Gimp.context_set_foreground(white_color)
+            black_color = Gegl.Color.new("black")
+            Gimp.context_set_foreground(black_color)
             mask_layer.edit_fill(Gimp.FillType.FOREGROUND)
-            print("DEBUG: Created white background mask (preserve context)")
+            print("DEBUG: Created black background mask (preserve all areas)")
 
-            # Force layer update to make sure white fill is committed
+            # Force layer update to make sure black fill is committed
             mask_layer.update(0, 0, ctx_size, ctx_size)
+            
+            # Explicitly ensure extension areas stay black by filling the entire context square
+            print(f"DEBUG: Ensuring all extension areas are black in {ctx_size}x{ctx_size} mask")
 
             # Step 3: Copy only the original image area, leave extended context white
 
@@ -1456,7 +1463,11 @@ class GimpAIPlugin(Gimp.PlugIn):
                 # Create Gegl processing graph for selection shape copying
                 graph = Gegl.Node()
 
-                # Source: Selection channel buffer (contains exact selection shape)
+                # Source 1: Current mask buffer (black background)
+                mask_source = graph.create_child("gegl:buffer-source")
+                mask_source.set_property("buffer", mask_layer.get_buffer())
+
+                # Source 2: Selection channel buffer (contains exact selection shape)
                 selection_source = graph.create_child("gegl:buffer-source")
                 selection_source.set_property("buffer", selection_buffer)
 
@@ -1469,25 +1480,29 @@ class GimpAIPlugin(Gimp.PlugIn):
                 translate.set_property("x", float(-ctx_x1))
                 translate.set_property("y", float(-ctx_y1))
 
-                # TEST: Comment out invert to see if extended areas are naturally white
-                # invert = graph.create_child("gegl:invert-linear")
+                # Composite the translated selection over the black background
+                # This preserves the black background in extension areas
+                composite = graph.create_child("gegl:over")
 
                 # Write to mask shadow buffer
                 output = graph.create_child("gegl:write-buffer")
                 output.set_property("buffer", mask_shadow_buffer)
 
-                # Link the processing chain: selection → translate → mask (NO INVERT, NO CROP)
+                # Link the processing chain: 
+                # mask_source (black bg) + translated_selection → composite → output
                 selection_source.link(translate)
-                translate.link(output)
+                mask_source.link(composite)
+                translate.connect_to("output", composite, "aux")
+                composite.link(output)
 
                 print(
-                    f"DEBUG: TEST - Processing selection shape: translate by ({-ctx_x1},{-ctx_y1}), NO INVERT, NO CROP"
+                    f"DEBUG: Compositing selection over black background: translate by ({-ctx_x1},{-ctx_y1})"
                 )
 
-                # Process the graph to copy selection shape - NO FALLBACK
+                # Process the graph to composite selection shape over black background
                 output.process()
                 print(
-                    "DEBUG: Successfully copied exact selection shape to mask using Gegl"
+                    "DEBUG: Successfully composited selection shape over black background preserving extension areas"
                 )
 
                 # Flush and merge shadow buffer to make changes visible
@@ -1511,46 +1526,46 @@ class GimpAIPlugin(Gimp.PlugIn):
                 f"DEBUG: Scaled mask from {ctx_size}x{ctx_size} to {target_size}x{target_size}"
             )
 
-            # Step 4.5: Invert the entire mask as the final step
-            # This converts: selection=white → black (inpaint), context=white → white (preserve)
-            # Wait, this would make everything wrong. Let me think...
-            # Actually, we need: selection=white → black, non-selected=black → white, context=white → white
-            # So we need a different approach...
-
-            print(
-                "DEBUG: Applying final inversion to convert selection to black for OpenAI"
-            )
+            # Step 4.5: Make selection areas transparent (the one simple change requested)
+            # Current state: black background, white selection copied from channel
+            # Needed: black background (preserve), transparent selection (inpaint)
+            print("DEBUG: Making selection areas transparent for inpainting")
             scaled_mask_layer = mask_image.get_layers()[0]
 
-            # Create Gegl invert operation on the scaled mask
+            # Create a simple color-to-alpha operation to make selection areas transparent
             from gi.repository import Gegl
 
-            # Get the layer buffer
+            transparency_graph = Gegl.Node()
+
+            # Get layer buffer
             layer_buffer = scaled_mask_layer.get_buffer()
             shadow_buffer = scaled_mask_layer.get_shadow_buffer()
 
-            # Create invert processing chain
-            invert_graph = Gegl.Node()
-            buffer_source = invert_graph.create_child("gegl:buffer-source")
+            # Source buffer
+            buffer_source = transparency_graph.create_child("gegl:buffer-source")
             buffer_source.set_property("buffer", layer_buffer)
 
-            invert_node = invert_graph.create_child("gegl:invert-linear")
+            # Convert white (selection) to transparent, keep everything else as-is
+            color_to_alpha = transparency_graph.create_child("gegl:color-to-alpha")
+            white_color = Gegl.Color.new("white")
+            color_to_alpha.set_property("color", white_color)
 
-            buffer_write = invert_graph.create_child("gegl:write-buffer")
+            # Output buffer
+            buffer_write = transparency_graph.create_child("gegl:write-buffer")
             buffer_write.set_property("buffer", shadow_buffer)
 
-            # Link and process
-            buffer_source.link(invert_node)
-            invert_node.link(buffer_write)
+            # Process: source → color-to-alpha → output
+            buffer_source.link(color_to_alpha)
+            color_to_alpha.link(buffer_write)
             buffer_write.process()
 
-            # Merge shadow buffer
+            # Merge changes
             shadow_buffer.flush()
             scaled_mask_layer.merge_shadow(True)
             scaled_mask_layer.update(0, 0, target_size, target_size)
 
             print(
-                "DEBUG: Final inversion complete - selection should now be black, context should be white"
+                "DEBUG: Selection areas are now transparent (inpaint), context/extension areas are black (preserved)"
             )
 
             # Step 5: Export as PNG for OpenAI
@@ -1603,7 +1618,7 @@ class GimpAIPlugin(Gimp.PlugIn):
             raise Exception(f"Selection-shaped mask creation failed: {str(e)}")
 
     def _create_mask_from_selection(self, image, width, height):
-        """Create a black mask from GIMP selection (legacy method)"""
+        """Create a transparent mask from GIMP selection (legacy method)"""
         try:
             print(f"DEBUG: Creating mask from selection {width}x{height} (legacy)")
 
@@ -1614,7 +1629,7 @@ class GimpAIPlugin(Gimp.PlugIn):
             # Handle the named tuple return value - extract values by position
             if len(selection_bounds) < 5:
                 print("DEBUG: No selection found, creating default circle mask")
-                return self._create_black_mask(width, height)
+                return self._create_simple_mask(width, height)
 
             # Extract from the returned tuple/named tuple
             has_selection = selection_bounds[0]
@@ -1625,7 +1640,7 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             if not has_selection:
                 print("DEBUG: No selection found, creating default circle mask")
-                return self._create_black_mask(width, height)
+                return self._create_simple_mask(width, height)
 
             print(f"DEBUG: Selection bounds: ({x1},{y1}) to ({x2},{y2})")
 
@@ -1647,28 +1662,28 @@ class GimpAIPlugin(Gimp.PlugIn):
                 f"DEBUG: Scaled selection: ({scaled_x1},{scaled_y1}) to ({scaled_x2},{scaled_y2})"
             )
 
-            # Create IHDR chunk data (L - grayscale format for OpenAI mask)
+            # Create IHDR chunk data (RGBA format for transparency)
             ihdr_data = (
                 width.to_bytes(4, "big")
                 + height.to_bytes(4, "big")
-                + b"\x08\x00\x00\x00\x00"  # 8-bit grayscale (L format)
+                + b"\x08\x06\x00\x00\x00"  # 8-bit RGBA format
             )
 
             import zlib
 
             ihdr_crc = zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF
 
-            # Create image data with black selection area
+            # Create image data with transparent selection area
             image_rows = []
             for y in range(height):
                 row = b"\x00"  # Filter byte
                 for x in range(width):
                     if scaled_x1 <= x <= scaled_x2 and scaled_y1 <= y <= scaled_y2:
-                        # Black grayscale (0 = inpaint this area)
-                        row += b"\x00"
+                        # Transparent (inpaint this area) - RGBA: (0, 0, 0, 0)
+                        row += b"\x00\x00\x00\x00"
                     else:
-                        # White grayscale (255 = keep original)
-                        row += b"\xff"
+                        # White opaque (preserve this area) - RGBA: (255, 255, 255, 255)
+                        row += b"\xff\xff\xff\xff"
                 image_rows.append(row)
 
             image_data = b"".join(image_rows)
@@ -1694,7 +1709,7 @@ class GimpAIPlugin(Gimp.PlugIn):
 
         except Exception as e:
             print(f"DEBUG: Failed to create selection mask: {e}")
-            return self._create_black_mask(width, height)
+            return self._create_simple_mask(width, height)
 
     def _create_multipart_data(self, fields, files):
         """Create multipart form data for file upload"""
@@ -1760,7 +1775,9 @@ class GimpAIPlugin(Gimp.PlugIn):
                 "prompt": prompt,
                 "n": "1",
                 "quality": "high",
+                "size": "1024x1024",  # OpenAI's max size
                 "moderation": "low",  # Less restrictive filtering
+                "input_fidelity": "high",  # High fidelity for better results
             }
 
             # Convert base64 image data back to bytes for the API
@@ -1873,7 +1890,7 @@ class GimpAIPlugin(Gimp.PlugIn):
             print(f"DEBUG: GPT-Image-1 API call failed: {e}")
             return False, f"GPT-Image-1 API call failed: {str(e)}", None
 
-    def _download_and_composite_result(self, image, api_response, context_info):
+    def _download_and_composite_result(self, image, api_response, context_info, mode):
         """Download AI result and composite it back to original image with proper masking"""
         try:
             print("DEBUG: Downloading and compositing AI result")
@@ -2092,28 +2109,25 @@ class GimpAIPlugin(Gimp.PlugIn):
                 # Clean up the temporary selection channel
                 image.remove_channel(selection_channel)
 
-                # TEMPORARILY DISABLED - Create a layer mask to show only the selection area while preserving full AI content
-                print("DEBUG: MASK CREATION TEMPORARILY DISABLED FOR TESTING")
-                print("DEBUG: Layer should show full AI result without any masking")
+                # Create a layer mask for contextual mode only
+                if mode == "contextual" and context_info["has_selection"]:
+                    print(
+                        "DEBUG: Creating selection-based mask for contextual mode while preserving full AI result in layer"
+                    )
+                    
+                    # Use GIMP's built-in selection mask type to automatically create properly shaped mask
+                    # This preserves the full AI content in the layer but masks visibility to selection area
+                    mask = result_layer.create_mask(Gimp.AddMaskType.SELECTION)
+                    result_layer.add_mask(mask)
 
-                # if context_info["has_selection"]:
-                #     print(
-                #         "DEBUG: Creating selection-based mask while preserving full AI result in layer"
-                #     )
-
-                #     # Use GIMP's built-in selection mask type to automatically create properly shaped mask
-                #     # This preserves the full AI content in the layer but masks visibility to selection area
-                #     mask = result_layer.create_mask(Gimp.AddMaskType.SELECTION)
-                #     result_layer.add_mask(mask)
-
-                #     print(
-                #         "DEBUG: Applied selection-based layer mask - full AI result preserved in layer, visibility limited to selection"
-                #     )
-                #     print(
-                #         "DEBUG: User can delete/modify mask to reveal more of the AI result beyond selection bounds"
-                #     )
-                # else:
-                #     print("DEBUG: No selection - layer shows full AI result without mask")
+                    print(
+                        "DEBUG: Applied selection-based layer mask - full AI result preserved in layer, visibility limited to selection"
+                    )
+                    print(
+                        "DEBUG: User can delete/modify mask to reveal more of the AI result beyond selection bounds"
+                    )
+                else:
+                    print("DEBUG: No selection or full_image mode - layer shows full AI result without mask")
 
                 # VALIDATION CHECKS
                 print(f"DEBUG: === SIMPLIFIED ALIGNMENT VALIDATION ===")
@@ -2435,12 +2449,16 @@ class GimpAIPlugin(Gimp.PlugIn):
         print(f"DEBUG: Using processing mode: {mode}")
 
         if mode == "full_image":
-            # Modified path: Use existing context extraction but base on full image
+            # Full image path: Use existing context extraction but base on full image
             print("DEBUG: Calculating full-image context extraction...")
             context_info = self._calculate_full_image_context_extraction(image)
+        elif mode == "contextual":
+            # Contextual path: Context extraction around selection area only
+            print("DEBUG: Calculating contextual selection-based extraction...")
+            context_info = self._calculate_context_extraction(image)
         else:
-            # Existing path: Context extraction for future models
-            print("DEBUG: Calculating context extraction...")
+            # Fallback to contextual for unknown modes
+            print("DEBUG: Unknown mode, defaulting to contextual extraction...")
             context_info = self._calculate_context_extraction(image)
 
         Gimp.progress_update(0.4)  # 40% - Context calculated
@@ -2477,7 +2495,7 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             # Step 8: Download and composite result with proper masking
             import_success, import_message = self._download_and_composite_result(
-                image, api_response, context_info
+                image, api_response, context_info, mode
             )
 
             if import_success:
@@ -2510,7 +2528,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 img_width = image.get_width()
                 img_height = image.get_height()
                 aspect_ratio = img_width / img_height
-                
+
                 if aspect_ratio > 1.2:  # Landscape
                     optimal_size = "1536x1024"
                 elif aspect_ratio < 0.83:  # Portrait
@@ -2519,7 +2537,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                     optimal_size = "1024x1024"
             else:
                 optimal_size = size
-            
+
             print(f"DEBUG: Using size {optimal_size} for generation")
 
             # Prepare the request data
@@ -2549,19 +2567,20 @@ class GimpAIPlugin(Gimp.PlugIn):
             # Extract the image data (base64 for GPT-Image-1)
             if "data" in response_data and len(response_data["data"]) > 0:
                 result_data = response_data["data"][0]
-                
+
                 # Handle base64 response format (GPT-Image-1)
                 if "b64_json" in result_data:
                     print("DEBUG: Processing base64 image data from GPT-Image-1")
-                    
+
                     # Decode base64 data
                     import base64
+
                     image_data = base64.b64decode(result_data["b64_json"])
                     print(f"DEBUG: Decoded {len(image_data)} bytes of image data")
-                    
+
                     # Process and add the image as a new layer
                     return self._add_layer_from_data(image, image_data)
-                    
+
                 elif "url" in result_data:
                     # Fallback for URL format (DALL-E 2/3 style)
                     image_url = result_data["url"]
