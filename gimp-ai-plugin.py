@@ -27,10 +27,14 @@ from gi.repository import Gimp, GimpUi, GLib, Gegl, Gio, Gtk, Gdk
 
 # Import pure coordinate transformation functions
 from coordinate_utils import (
-    calculate_context_extraction,
     calculate_mask_coordinates,
     calculate_placement_coordinates,
     validate_context_info,
+    get_optimal_openai_shape,
+    calculate_padding_for_shape,
+    extract_context_with_selection,
+    calculate_result_placement,
+    calculate_scale_from_shape,
 )
 
 
@@ -682,32 +686,33 @@ class GimpAIPlugin(Gimp.PlugIn):
             return False, f"Image access error: {str(e)}"
 
     def _extract_context_region(self, image, context_info):
-        """Extract true square context region without distortion"""
+        """Extract context region and scale to optimal OpenAI shape"""
         try:
-            print("DEBUG: Extracting TRUE SQUARE context region for AI")
+            print("DEBUG: Extracting context region for AI with optimal shape")
 
-            # Get parameters for the context square
-            ctx_x1, ctx_y1, ctx_size, _ = context_info["context_square"]
-            target_size = context_info["target_size"]
+            # Get parameters for the extract region  
+            ctx_x1, ctx_y1, ctx_width, ctx_height = context_info["extract_region"]
+            target_shape = context_info["target_shape"]
+            target_width, target_height = target_shape
             orig_width = image.get_width()
             orig_height = image.get_height()
 
             print(
-                f"DEBUG: Context square: ({ctx_x1},{ctx_y1}) to ({ctx_x1+ctx_size},{ctx_y1+ctx_size}) size={ctx_size}"
+                f"DEBUG: Extract region: ({ctx_x1},{ctx_y1}) to ({ctx_x1+ctx_width},{ctx_y1+ctx_height}) size={ctx_width}x{ctx_height}"
             )
             print(f"DEBUG: Original image: {orig_width}x{orig_height}")
-            print(f"DEBUG: Target size: {target_size}x{target_size}")
+            print(f"DEBUG: Target shape: {target_width}x{target_height}")
 
-            # Create a new square canvas
-            square_image = Gimp.Image.new(ctx_size, ctx_size, image.get_base_type())
-            if not square_image:
-                return False, "Failed to create square canvas", None
+            # Create a new canvas with the extract region size
+            extract_image = Gimp.Image.new(ctx_width, ctx_height, image.get_base_type())
+            if not extract_image:
+                return False, "Failed to create extract canvas", None
 
-            # Calculate what part of the original image intersects with our context square
+            # Calculate what part of the original image intersects with our extract region
             intersect_x1 = max(0, ctx_x1)
             intersect_y1 = max(0, ctx_y1)
-            intersect_x2 = min(orig_width, ctx_x1 + ctx_size)
-            intersect_y2 = min(orig_height, ctx_y1 + ctx_size)
+            intersect_x2 = min(orig_width, ctx_x1 + ctx_width)
+            intersect_y2 = min(orig_height, ctx_y1 + ctx_height)
 
             intersect_width = intersect_x2 - intersect_x1
             intersect_height = intersect_y2 - intersect_y1
@@ -730,36 +735,72 @@ class GimpAIPlugin(Gimp.PlugIn):
                 )
                 if not merged_layer:
                     temp_image.delete()
-                    square_image.delete()
+                    extract_image.delete()
                     return False, "Failed to merge layers", None
 
-                # Copy this layer to our square canvas at the correct position
-                layer_copy = Gimp.Layer.new_from_drawable(merged_layer, square_image)
-                square_image.insert_layer(layer_copy, None, 0)
+                # Copy this layer to our extract canvas at the correct position
+                layer_copy = Gimp.Layer.new_from_drawable(merged_layer, extract_image)
+                extract_image.insert_layer(layer_copy, None, 0)
 
-                # Position the layer correctly within the square
-                # The layer should be at the same relative position as in the context square
-                paste_x = intersect_x1 - ctx_x1  # Offset within the square
-                paste_y = intersect_y1 - ctx_y1  # Offset within the square
+                # Position the layer correctly within the extract region
+                # The layer should be at the same relative position as in the extract region
+                paste_x = intersect_x1 - ctx_x1  # Offset within the extract region
+                paste_y = intersect_y1 - ctx_y1  # Offset within the extract region
                 layer_copy.set_offsets(paste_x, paste_y)
 
                 print(
-                    f"DEBUG: Placed image content at offset ({paste_x},{paste_y}) within square"
+                    f"DEBUG: Placed image content at offset ({paste_x},{paste_y}) within extract region"
                 )
 
                 # Clean up temp image
                 temp_image.delete()
             else:
                 print(
-                    "DEBUG: No intersection with original image - creating empty square"
+                    "DEBUG: No intersection with original image - creating empty extract region"
                 )
 
-            # Scale to target size for OpenAI
-            if ctx_size != target_size:
-                square_image.scale(target_size, target_size)
-                print(
-                    f"DEBUG: Scaled square from {ctx_size}x{ctx_size} to {target_size}x{target_size}"
-                )
+            # Scale and pad to target shape for OpenAI (preserve aspect ratio)
+            if ctx_width != target_width or ctx_height != target_height:
+                # Get padding info to preserve aspect ratio
+                if 'padding_info' in context_info:
+                    padding_info = context_info['padding_info']
+                    scale_factor = padding_info['scale_factor']
+                    scaled_w, scaled_h = padding_info['scaled_size']
+                    pad_left, pad_top, pad_right, pad_bottom = padding_info['padding']
+                    
+                    print(f"DEBUG: Using aspect-ratio preserving scaling:")
+                    print(f"  Scale factor: {scale_factor}")
+                    print(f"  Scaled size: {scaled_w}x{scaled_h}")
+                    print(f"  Padding: left={pad_left}, top={pad_top}, right={pad_right}, bottom={pad_bottom}")
+                    
+                    # First scale preserving aspect ratio
+                    if scale_factor != 1.0:
+                        extract_image.scale(scaled_w, scaled_h)
+                        print(f"DEBUG: Scaled to {scaled_w}x{scaled_h} preserving aspect ratio")
+                    
+                    # Then add padding to reach target dimensions
+                    if pad_left > 0 or pad_top > 0 or pad_right > 0 or pad_bottom > 0:
+                        # Resize canvas to add padding
+                        extract_image.resize(target_width, target_height, pad_left, pad_top)
+                        print(f"DEBUG: Added padding to reach {target_width}x{target_height}")
+                else:
+                    # Fallback: calculate padding on the fly
+                    padding_info = calculate_padding_for_shape(ctx_width, ctx_height, target_width, target_height)
+                    scale_factor = padding_info['scale_factor']
+                    scaled_w, scaled_h = padding_info['scaled_size']
+                    pad_left, pad_top, pad_right, pad_bottom = padding_info['padding']
+                    
+                    print(f"DEBUG: Calculating padding on the fly:")
+                    print(f"  Scale factor: {scale_factor}")
+                    print(f"  Padding: left={pad_left}, top={pad_top}, right={pad_right}, bottom={pad_bottom}")
+                    
+                    # First scale preserving aspect ratio
+                    extract_image.scale(scaled_w, scaled_h)
+                    
+                    # Then add padding
+                    extract_image.resize(target_width, target_height, pad_left, pad_top)
+                    
+                print(f"DEBUG: Final extract image size: {target_width}x{target_height} (aspect ratio preserved)")
 
             # Export to PNG
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
@@ -772,14 +813,14 @@ class GimpAIPlugin(Gimp.PlugIn):
                 pdb_proc = Gimp.get_pdb().lookup_procedure("file-png-export")
                 pdb_config = pdb_proc.create_config()
                 pdb_config.set_property("run-mode", Gimp.RunMode.NONINTERACTIVE)
-                pdb_config.set_property("image", square_image)
+                pdb_config.set_property("image", extract_image)
                 pdb_config.set_property("file", file)
                 pdb_config.set_property("options", None)
 
                 result = pdb_proc.run(pdb_config)
                 if result.index(0) != Gimp.PDBStatusType.SUCCESS:
                     print(f"DEBUG: PNG export failed: {result.index(0)}")
-                    square_image.delete()
+                    extract_image.delete()
                     return False, "PNG export failed", None
 
                 # Read the exported file and encode to base64
@@ -790,7 +831,7 @@ class GimpAIPlugin(Gimp.PlugIn):
 
                 # Clean up
                 os.unlink(temp_filename)
-                square_image.delete()
+                extract_image.delete()
 
                 info = f"Extracted context region: {len(png_data)} bytes as PNG, base64 length: {len(base64_data)}"
                 print(f"DEBUG: {info}")
@@ -800,7 +841,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 print(f"DEBUG: Context extraction export failed: {e}")
                 if os.path.exists(temp_filename):
                     os.unlink(temp_filename)
-                square_image.delete()
+                extract_image.delete()
                 return False, f"Export failed: {str(e)}", None
 
         except Exception as e:
@@ -1156,22 +1197,19 @@ class GimpAIPlugin(Gimp.PlugIn):
                 f"DEBUG: Full image bounds: ({full_x1},{full_y1}) to ({full_x2},{full_y2})"
             )
 
-            # For full image mode, we want to scale the entire image to fit in a square
-            # The square size should be 1024x1024 (OpenAI's max)
-            target_size = 1024
+            # For full image mode, select optimal OpenAI shape
+            target_shape = get_optimal_openai_shape(orig_width, orig_height)
+            target_width, target_height = target_shape
+            target_size = max(target_width, target_height)  # For backward compatibility
 
-            print(f"DEBUG: Target square size: {target_size}x{target_size}")
+            print(f"DEBUG: Target OpenAI shape: {target_width}x{target_height}")
 
-            # For full image, the context should cover the entire original image
-            # The extraction code will scale it down to fit the target_size
+            # For full image, the context covers the entire original image
             ctx_x1 = 0
             ctx_y1 = 0
-            ctx_size = max(
-                orig_width, orig_height
-            )  # Large enough to cover entire image
 
             print(
-                f"DEBUG: Context square: ({ctx_x1},{ctx_y1}) size {ctx_size}x{ctx_size}"
+                f"DEBUG: Context region covers entire image: {orig_width}x{orig_height}"
             )
 
             # Check if there's actually a selection - if not, use full image for transformation
@@ -1193,15 +1231,14 @@ class GimpAIPlugin(Gimp.PlugIn):
                 sel_bounds = (full_x1, full_y1, full_x2, full_y2)
 
             return {
-                "context_square": (
-                    ctx_x1,
-                    ctx_y1,
-                    ctx_size,
-                    0,
-                ),  # Match existing structure
-                "target_size": target_size,
+                "mode": "full",
                 "selection_bounds": sel_bounds,
-                "has_selection": has_real_selection,  # True selection state
+                "extract_region": (0, 0, orig_width, orig_height),  # Extract entire image
+                "target_shape": target_shape,
+                "target_size": max(target_shape),  # For backward compatibility
+                "needs_padding": True,
+                "padding_info": calculate_padding_for_shape(orig_width, orig_height, target_shape[0], target_shape[1]),
+                "has_selection": has_real_selection,
                 "original_bounds": (full_x1, full_y1, full_x2, full_y2),
             }
 
@@ -1210,9 +1247,9 @@ class GimpAIPlugin(Gimp.PlugIn):
             return None
 
     def _calculate_context_extraction(self, image):
-        """Calculate smart context extraction area around selection"""
+        """Calculate smart context extraction area around selection using optimal shapes"""
         try:
-            print("DEBUG: Calculating smart context extraction")
+            print("DEBUG: Calculating smart context extraction with optimal shapes")
 
             # Get image dimensions
             img_width = image.get_width()
@@ -1225,9 +1262,10 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             if len(selection_bounds) < 5 or not selection_bounds[0]:
                 print("DEBUG: No selection found, using center area")
-                # Use pure function with no selection
-                return calculate_context_extraction(
-                    img_width, img_height, 0, 0, 0, 0, has_selection=False
+                # Use new shape-aware function with no selection
+                return extract_context_with_selection(
+                    img_width, img_height, 0, 0, 0, 0, 
+                    mode='focused', has_selection=False
                 )
 
             # Extract selection bounds
@@ -1242,85 +1280,93 @@ class GimpAIPlugin(Gimp.PlugIn):
                 f"DEBUG: Selection: ({sel_x1},{sel_y1}) to ({sel_x2},{sel_y2}), size: {sel_width}x{sel_height}"
             )
 
-            # Use pure function for calculation
-            context_info = calculate_context_extraction(
+            # Use new shape-aware function for calculation
+            context_info = extract_context_with_selection(
                 img_width,
                 img_height,
                 sel_x1,
                 sel_y1,
                 sel_x2,
                 sel_y2,
+                mode='focused',
                 has_selection=True,
             )
 
-            # Validate the result
+            # Log the optimal shape selected
+            print(f"DEBUG: Optimal shape selected: {context_info['target_shape']}")
+            
+            # Extract dimensions for any code that still expects target_size
+            target_w, target_h = context_info['target_shape']
+            context_info['target_size'] = max(target_w, target_h)
+            
+            # Validate still works but now with shape support
             is_valid, error_msg = validate_context_info(context_info)
             if not is_valid:
                 print(f"DEBUG: Context validation failed: {error_msg}")
                 # Fallback to center extraction
-                return calculate_context_extraction(
-                    img_width, img_height, 0, 0, 0, 0, has_selection=False
+                return extract_context_with_selection(
+                    img_width, img_height, 0, 0, 0, 0,
+                    mode='focused', has_selection=False
                 )
 
             # Add debug output for the calculated values
-            square_x1, square_y1, square_size, _ = context_info["context_square"]
-            print(
-                f"DEBUG: Context padding: {max(32, min(200, int(max(sel_width, sel_height) * 0.4)))}px"
-            )
-            print(
-                f"DEBUG: Desired context square: ({square_x1},{square_y1}) to ({square_x1+square_size},{square_y1+square_size}), size: {square_size}x{square_size}"
-            )
-
-            extract_x1, extract_y1, extract_width, extract_height = context_info[
-                "extract_region"
-            ]
+            extract_x1, extract_y1, extract_width, extract_height = context_info["extract_region"]
+            target_w, target_h = context_info["target_shape"]
+            
             print(
                 f"DEBUG: Extract region: ({extract_x1},{extract_y1}) to ({extract_x1+extract_width},{extract_y1+extract_height}), size: {extract_width}x{extract_height}"
             )
-
-            pad_left, pad_top, pad_right, pad_bottom = context_info["padding"]
             print(
-                f"DEBUG: Padding needed: left={pad_left}, top={pad_top}, right={pad_right}, bottom={pad_bottom}"
+                f"DEBUG: Target shape for OpenAI: {target_w}x{target_h}"
             )
-            print(
-                f"DEBUG: Target size for OpenAI: {context_info['target_size']}x{context_info['target_size']}"
-            )
+            
+            if 'padding_info' in context_info:
+                padding_info = context_info['padding_info']
+                print(f"DEBUG: Scale factor: {padding_info['scale_factor']}")
+                print(f"DEBUG: Padding: {padding_info['padding']}")
 
             return context_info
 
         except Exception as e:
             print(f"DEBUG: Context calculation failed: {e}")
             # Fallback to simple center extraction
-            return calculate_context_extraction(
-                img_width, img_height, 0, 0, 0, 0, has_selection=False
+            return extract_context_with_selection(
+                img_width, img_height, 0, 0, 0, 0, mode='focused', has_selection=False
             )
 
     def _prepare_full_image(self, image):
-        """Prepare full image for GPT-Image-1 processing"""
+        """Prepare full image for GPT-Image-1 processing with optimal shape"""
         try:
-            print("DEBUG: Preparing full image for transformation")
+            print("DEBUG: Preparing full image for transformation with optimal shape")
 
             width = image.get_width()
             height = image.get_height()
 
             print(f"DEBUG: Original image size: {width}x{height}")
 
-            # Scale to fit in 1024x1024 preserving aspect ratio
-            max_size = 1024
-            scale = min(max_size / width, max_size / height)
-            target_width = int(width * scale)
-            target_height = int(height * scale)
+            # Get optimal OpenAI shape for this image
+            target_shape = get_optimal_openai_shape(width, height)
+            target_width, target_height = target_shape
+            
+            print(f"DEBUG: Optimal OpenAI shape selected: {target_width}x{target_height}")
+
+            # Calculate padding info for this shape
+            padding_info = calculate_padding_for_shape(width, height, target_width, target_height)
+            scale = padding_info['scale_factor']
+            scaled_width, scaled_height = padding_info['scaled_size']
 
             print(f"DEBUG: Scale factor: {scale:.3f}")
-            print(f"DEBUG: Target size: {target_width}x{target_height}")
+            print(f"DEBUG: Scaled size: {scaled_width}x{scaled_height}")
 
-            # Create simplified context_info for compatibility
+            # Create context_info with both old and new format for compatibility
             context_info = {
                 "mode": "full_image",
                 "original_size": (width, height),
-                "scaled_size": (target_width, target_height),
+                "scaled_size": (scaled_width, scaled_height),
                 "scale_factor": scale,
-                "target_size": max_size,
+                "target_shape": target_shape,  # New: optimal shape tuple
+                "target_size": target_width if target_width == target_height else max(target_width, target_height),  # Old format fallback
+                "padding_info": padding_info,
                 "has_selection": True,  # Always true for this mode
             }
 
@@ -1328,12 +1374,13 @@ class GimpAIPlugin(Gimp.PlugIn):
 
         except Exception as e:
             print(f"DEBUG: Full image preparation failed: {e}")
-            # Fallback to 1024x1024
+            # Fallback to square
             return {
                 "mode": "full_image",
                 "original_size": (1024, 1024),
                 "scaled_size": (1024, 1024),
                 "scale_factor": 1.0,
+                "target_shape": (1024, 1024),
                 "target_size": 1024,
                 "has_selection": True,
             }
@@ -1521,11 +1568,147 @@ class GimpAIPlugin(Gimp.PlugIn):
             mask_img.save(mask_bytes, format="PNG")
             return mask_bytes.getvalue()
 
+    def _create_full_size_mask_then_scale(self, image, selection_channel, context_info):
+        """Create mask at full original size, then scale/pad using same operations as image"""
+        try:
+            target_shape = context_info['target_shape']
+            target_width, target_height = target_shape
+            padding_info = context_info['padding_info']
+            scale_factor = padding_info['scale_factor']
+            scaled_w, scaled_h = padding_info['scaled_size']
+            pad_left, pad_top, pad_right, pad_bottom = padding_info['padding']
+            
+            orig_width = image.get_width()
+            orig_height = image.get_height()
+            
+            print(f"DEBUG: Creating mask at full size {orig_width}x{orig_height}, then scaling like image")
+            
+            # Use the EXISTING working mask creation logic, but at original size
+            mask_image = Gimp.Image.new(orig_width, orig_height, Gimp.ImageBaseType.RGB)
+            mask_layer = Gimp.Layer.new(
+                mask_image,
+                "selection_mask", 
+                orig_width,
+                orig_height,
+                Gimp.ImageType.RGBA_IMAGE,
+                100.0,
+                Gimp.LayerMode.NORMAL,
+            )
+            mask_image.insert_layer(mask_layer, None, 0)
+            
+            # Fill with black (preserve areas)
+            from gi.repository import Gegl
+            black_color = Gegl.Color.new("black") 
+            Gimp.context_set_foreground(black_color)
+            mask_layer.edit_fill(Gimp.FillType.FOREGROUND)
+            
+            # Copy selection shape exactly as the working code does
+            selection_buffer = selection_channel.get_buffer()
+            mask_shadow_buffer = mask_layer.get_shadow_buffer()
+            
+            # Use the WORKING Gegl approach from the existing code
+            graph = Gegl.Node()
+            
+            mask_source = graph.create_child("gegl:buffer-source")
+            mask_source.set_property("buffer", mask_layer.get_buffer())
+            
+            selection_source = graph.create_child("gegl:buffer-source")
+            selection_source.set_property("buffer", selection_buffer)
+            
+            composite = graph.create_child("gegl:over")
+            output = graph.create_child("gegl:write-buffer")
+            output.set_property("buffer", mask_shadow_buffer)
+            
+            mask_source.link(composite)
+            selection_source.connect_to("output", composite, "aux")
+            composite.link(output)
+            output.process()
+            
+            mask_shadow_buffer.flush()
+            mask_layer.merge_shadow(True)
+            mask_layer.update(0, 0, orig_width, orig_height)
+            
+            # Make white areas transparent (WORKING code)
+            transparency_graph = Gegl.Node()
+            layer_buffer = mask_layer.get_buffer()
+            shadow_buffer = mask_layer.get_shadow_buffer()
+            
+            buffer_source = transparency_graph.create_child("gegl:buffer-source")
+            buffer_source.set_property("buffer", layer_buffer)
+            
+            color_to_alpha = transparency_graph.create_child("gegl:color-to-alpha")
+            white_color = Gegl.Color.new("white")
+            color_to_alpha.set_property("color", white_color)
+            
+            buffer_write = transparency_graph.create_child("gegl:write-buffer")
+            buffer_write.set_property("buffer", shadow_buffer)
+            
+            buffer_source.link(color_to_alpha)
+            color_to_alpha.link(buffer_write)
+            buffer_write.process()
+            
+            shadow_buffer.flush()
+            mask_layer.merge_shadow(True)
+            mask_layer.update(0, 0, orig_width, orig_height)
+            
+            print(f"DEBUG: Created mask at original size with transparent selection areas")
+            
+            # NOW scale using SAME operations as image  
+            if scale_factor != 1.0:
+                mask_image.scale(scaled_w, scaled_h)
+                print(f"DEBUG: Scaled mask to {scaled_w}x{scaled_h}")
+            
+            if pad_left > 0 or pad_top > 0 or pad_right > 0 or pad_bottom > 0:
+                mask_image.resize(target_width, target_height, pad_left, pad_top)
+                print(f"DEBUG: Added padding to mask to reach {target_width}x{target_height}")
+            
+            # Export (same as working code)
+            import tempfile
+            import os
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+                temp_filename = temp_file.name
+            
+            file = Gio.File.new_for_path(temp_filename)
+            pdb_proc = Gimp.get_pdb().lookup_procedure("file-png-export")
+            pdb_config = pdb_proc.create_config()
+            pdb_config.set_property("run-mode", Gimp.RunMode.NONINTERACTIVE)
+            pdb_config.set_property("image", mask_image)
+            pdb_config.set_property("file", file)
+            pdb_config.set_property("options", None)
+            
+            result = pdb_proc.run(pdb_config)
+            
+            if result.index(0) != Gimp.PDBStatusType.SUCCESS:
+                mask_image.delete()
+                image.remove_channel(selection_channel)
+                os.unlink(temp_filename)
+                raise Exception("PNG export failed")
+            
+            with open(temp_filename, "rb") as f:
+                png_data = f.read()
+            
+            os.unlink(temp_filename)
+            mask_image.delete()
+            image.remove_channel(selection_channel)
+            
+            print(f"DEBUG: Created full-size-then-scaled mask: {len(png_data)} bytes")
+            return png_data
+            
+        except Exception as e:
+            print(f"DEBUG: Full size mask creation failed: {e}")
+            if 'mask_image' in locals():
+                mask_image.delete()  
+            if 'selection_channel' in locals():
+                image.remove_channel(selection_channel)
+            raise Exception(f"Full size mask creation failed: {e}")
+
     def _create_context_mask(self, image, context_info, target_size):
         """Create mask from actual selection shape using pixel-by-pixel copying"""
         try:
+            target_shape = context_info.get("target_shape", (target_size, target_size))
+            target_width, target_height = target_shape
             print(
-                f"DEBUG: Creating pixel-perfect selection mask {target_size}x{target_size}"
+                f"DEBUG: Creating pixel-perfect selection mask {target_width}x{target_height}"
             )
 
             if not context_info["has_selection"]:
@@ -1533,9 +1716,9 @@ class GimpAIPlugin(Gimp.PlugIn):
                     "No selection available - selection-shaped mask requires an active selection"
                 )
 
-            # Get context square info
-            ctx_x1, ctx_y1, ctx_size, _ = context_info["context_square"]
-            print(f"DEBUG: Context square: ({ctx_x1},{ctx_y1}) size {ctx_size}")
+            # Get extract region info
+            ctx_x1, ctx_y1, ctx_width, ctx_height = context_info["extract_region"]
+            print(f"DEBUG: Extract region: ({ctx_x1},{ctx_y1}) size {ctx_width}x{ctx_height}")
 
             # Step 1: Save original selection as channel to preserve its exact shape
             selection_channel = Gimp.Selection.save(image)
@@ -1543,8 +1726,12 @@ class GimpAIPlugin(Gimp.PlugIn):
                 raise Exception("Failed to save selection as channel")
             print("DEBUG: Saved selection as channel for pixel copying")
 
-            # Step 2: Create context-sized mask image (RGBA for transparency)
-            mask_image = Gimp.Image.new(ctx_size, ctx_size, Gimp.ImageBaseType.RGB)
+            # For full image with padding, use simplified approach that mirrors image processing
+            if 'padding_info' in context_info and context_info.get('mode') == 'full':
+                return self._create_full_size_mask_then_scale(image, selection_channel, context_info)
+
+            # Step 2: Create target-shaped mask image (RGBA for transparency)
+            mask_image = Gimp.Image.new(target_width, target_height, Gimp.ImageBaseType.RGB)
             if not mask_image:
                 image.remove_channel(selection_channel)
                 raise Exception("Failed to create mask image")
@@ -1552,8 +1739,8 @@ class GimpAIPlugin(Gimp.PlugIn):
             mask_layer = Gimp.Layer.new(
                 mask_image,
                 "selection_mask",
-                ctx_size,
-                ctx_size,
+                target_width,
+                target_height,
                 Gimp.ImageType.RGBA_IMAGE,
                 100.0,
                 Gimp.LayerMode.NORMAL,
@@ -1574,11 +1761,11 @@ class GimpAIPlugin(Gimp.PlugIn):
             print("DEBUG: Created black background mask (preserve all areas)")
 
             # Force layer update to make sure black fill is committed
-            mask_layer.update(0, 0, ctx_size, ctx_size)
+            mask_layer.update(0, 0, target_width, target_height)
 
-            # Explicitly ensure extension areas stay black by filling the entire context square
+            # Explicitly ensure extension areas stay black by filling the entire target area
             print(
-                f"DEBUG: Ensuring all extension areas are black in {ctx_size}x{ctx_size} mask"
+                f"DEBUG: Ensuring all extension areas are black in {target_width}x{target_height} mask"
             )
 
             # Step 3: Copy only the original image area, leave extended context white
@@ -1591,8 +1778,22 @@ class GimpAIPlugin(Gimp.PlugIn):
             img_offset_y = max(
                 0, -ctx_y1
             )  # where original image starts in context square
-            img_end_x = min(ctx_size, img_offset_x + orig_width)
-            img_end_y = min(ctx_size, img_offset_y + orig_height)
+            # Calculate where the original image content appears in the final padded target shape
+            # Account for both extract region and padding
+            if 'padding_info' in context_info:
+                padding_info = context_info['padding_info']
+                scale_factor = padding_info['scale_factor']
+                pad_left, pad_top, pad_right, pad_bottom = padding_info['padding']
+                
+                # Original content is scaled and then padded
+                img_end_x = min(target_width - pad_left - pad_right, int(orig_width * scale_factor))
+                img_end_y = min(target_height - pad_top - pad_bottom, int(orig_height * scale_factor))
+                
+                print(f"DEBUG: Accounting for padding in mask - scale={scale_factor}, padding=({pad_left},{pad_top},{pad_right},{pad_bottom})")
+            else:
+                # Fallback to simple calculation
+                img_end_x = min(ctx_width, orig_width - ctx_x1 if ctx_x1 >= 0 else orig_width)
+                img_end_y = min(ctx_height, orig_height - ctx_y1 if ctx_y1 >= 0 else orig_height)
 
             print(
                 f"DEBUG: Original image appears at ({img_offset_x},{img_offset_y}) to ({img_end_x},{img_end_y}) in context square"
@@ -1625,15 +1826,46 @@ class GimpAIPlugin(Gimp.PlugIn):
                 # Source 2: Selection channel buffer (contains exact selection shape)
                 selection_source = graph.create_child("gegl:buffer-source")
                 selection_source.set_property("buffer", selection_buffer)
+                
+                # Scale selection if needed to match the final image scaling
+                if 'padding_info' in context_info:
+                    padding_info = context_info['padding_info']
+                    scale_factor = padding_info['scale_factor']
+                    
+                    if abs(scale_factor - 1.0) > 0.001:  # Need scaling
+                        print(f"DEBUG: Scaling selection channel by factor {scale_factor}")
+                        scale_op = graph.create_child("gegl:scale-ratio")
+                        scale_op.set_property("x", float(scale_factor))
+                        scale_op.set_property("y", float(scale_factor))
+                        selection_source.link(scale_op)
+                        selection_input = scale_op
+                    else:
+                        selection_input = selection_source
+                else:
+                    selection_input = selection_source
 
-                # Translate selection from world coordinates to context square coordinates
-                # Context square starts at (ctx_x1, ctx_y1) in world coordinates
-                # Selection coordinates need to be translated by (-ctx_x1, -ctx_y1)
-                # to map them into context square coordinate system
+                # Translate selection to correct position in padded target shape
+                # For full image with padding, the selection has been scaled and needs padding offset
+                if 'padding_info' in context_info:
+                    padding_info = context_info['padding_info']
+                    pad_left, pad_top, pad_right, pad_bottom = padding_info['padding']
+                    
+                    # Selection has already been scaled, just add padding offset
+                    translate_x = pad_left
+                    translate_y = pad_top
+                    
+                    print(f"DEBUG: Mask translation for padded image: translate by ({translate_x},{translate_y})")
+                else:
+                    # Original logic for non-padded extracts
+                    translate_x = -ctx_x1
+                    translate_y = -ctx_y1
 
                 translate = graph.create_child("gegl:translate")
-                translate.set_property("x", float(-ctx_x1))
-                translate.set_property("y", float(-ctx_y1))
+                translate.set_property("x", float(translate_x))
+                translate.set_property("y", float(translate_y))
+                
+                # Connect scaled selection through translate to composite
+                selection_input.link(translate)
 
                 # Composite the translated selection over the black background
                 # This preserves the black background in extension areas
@@ -1651,7 +1883,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 composite.link(output)
 
                 print(
-                    f"DEBUG: Compositing selection over black background: translate by ({-ctx_x1},{-ctx_y1})"
+                    f"DEBUG: Compositing selection over black background: translate by ({translate_x},{translate_y})"
                 )
 
                 # Process the graph to composite selection shape over black background
@@ -1668,17 +1900,17 @@ class GimpAIPlugin(Gimp.PlugIn):
                 print("DEBUG: No intersection - mask remains fully white")
 
             # Force complete layer update
-            mask_layer.update(0, 0, ctx_size, ctx_size)
+            mask_layer.update(0, 0, target_width, target_height)
 
             # Force flush all changes to ensure PNG export sees the correct data
             Gimp.displays_flush()
 
             print("DEBUG: Successfully copied exact selection shape to mask using Gegl")
 
-            # Step 4: Scale mask to target size (same as context image scaling)
-            mask_image.scale(target_size, target_size)
+            # Step 4: Mask is already at target shape, no scaling needed
+            # (Previous version scaled square masks, but we now create masks at target shape)
             print(
-                f"DEBUG: Scaled mask from {ctx_size}x{ctx_size} to {target_size}x{target_size}"
+                f"DEBUG: Mask created at target shape {target_width}x{target_height}"
             )
 
             # Step 4.5: Make selection areas transparent (the one simple change requested)
@@ -2173,7 +2405,7 @@ class GimpAIPlugin(Gimp.PlugIn):
 
         return body, boundary
 
-    def _call_openai_inpaint(self, image_data, mask_data, prompt, api_key):
+    def _call_openai_inpaint(self, image_data, mask_data, prompt, api_key, size="1024x1024"):
         """Call OpenAI GPT-Image-1 API for inpainting"""
         try:
             print(f"DEBUG: Calling GPT-Image-1 API with prompt: {prompt}")
@@ -2208,7 +2440,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 "prompt": prompt,
                 "n": "1",
                 "quality": "high",
-                "size": "1024x1024",  # OpenAI's max size
+                "size": size if size else "1024x1024",  # Use provided size or default
                 "moderation": "low",  # Less restrictive filtering
                 "input_fidelity": "high",  # High fidelity for better results
             }
@@ -2419,29 +2651,46 @@ class GimpAIPlugin(Gimp.PlugIn):
 
                 # Get context info for compositing
                 sel_x1, sel_y1, sel_x2, sel_y2 = context_info["selection_bounds"]
-                ctx_x1, ctx_y1, ctx_size, _ = context_info["context_square"]
-                target_size = context_info["target_size"]
+                ctx_x1, ctx_y1, ctx_width, ctx_height = context_info["extract_region"]
+                target_shape = context_info["target_shape"]
 
                 print(f"DEBUG: Original image: {orig_width}x{orig_height}")
                 print(
                     f"DEBUG: Selection bounds: ({sel_x1},{sel_y1}) to ({sel_x2},{sel_y2})"
                 )
-                print(f"DEBUG: Context square: ({ctx_x1},{ctx_y1}), size {ctx_size}")
+                print(f"DEBUG: Extract region: ({ctx_x1},{ctx_y1}), size {ctx_width}x{ctx_height}")
 
-                # Scale AI result back to context size if needed
+                # Scale AI result back to extract region size if needed
                 if (
-                    ai_layer.get_width() != ctx_size
-                    or ai_layer.get_height() != ctx_size
+                    ai_layer.get_width() != ctx_width
+                    or ai_layer.get_height() != ctx_height
                 ):
-                    # Create a scaled version
                     scaled_img = ai_result_img.duplicate()
-                    scaled_img.scale(ctx_size, ctx_size)
+                    
+                    # For full image mode with padding, remove padding first, then scale
+                    if 'padding_info' in context_info and context_info.get('mode') == 'full':
+                        padding_info = context_info['padding_info']
+                        pad_left, pad_top, pad_right, pad_bottom = padding_info['padding']
+                        scaled_w, scaled_h = padding_info['scaled_size']
+                        
+                        print(f"DEBUG: Removing padding from AI result: crop to {scaled_w}x{scaled_h}")
+                        print(f"DEBUG: Padding to remove: left={pad_left}, top={pad_top}, right={pad_right}, bottom={pad_bottom}")
+                        
+                        # Crop to remove padding (get the actual content without black bars)
+                        scaled_img.crop(scaled_w, scaled_h, pad_left, pad_top)
+                        print(f"DEBUG: Cropped AI result to {scaled_w}x{scaled_h} (removed padding)")
+                        
+                        # Now scale the unpadded result to original size
+                        scaled_img.scale(ctx_width, ctx_height)
+                        print(f"DEBUG: Scaled unpadded result to original size: {ctx_width}x{ctx_height}")
+                    else:
+                        # Normal scaling for non-padded results  
+                        scaled_img.scale(ctx_width, ctx_height)
+                        print(f"DEBUG: Scaled AI result to extract region size: {ctx_width}x{ctx_height}")
+                    
                     scaled_layers = scaled_img.get_layers()
                     if scaled_layers:
                         ai_layer = scaled_layers[0]
-                    print(
-                        f"DEBUG: Scaled AI result to context size: {ctx_size}x{ctx_size}"
-                    )
 
                 # USE PURE COORDINATE FUNCTION FOR PLACEMENT
                 placement = calculate_placement_coordinates(context_info)
@@ -2473,7 +2722,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 from gi.repository import Gegl
 
                 print(
-                    f"DEBUG: Placing {ctx_size}x{ctx_size} AI result at ({paste_x},{paste_y})"
+                    f"DEBUG: Placing {ctx_width}x{ctx_height} AI result at ({paste_x},{paste_y})"
                 )
 
                 # Clear selection before Gegl processing to prevent clipping, then restore it
@@ -2941,8 +3190,21 @@ class GimpAIPlugin(Gimp.PlugIn):
         Gimp.displays_flush()  # Force UI update
 
         # Step 7: Call AI API with context and mask
+        # Determine the optimal size for OpenAI API
+        if 'target_shape' in context_info:
+            target_w, target_h = context_info['target_shape']
+            api_size = f"{target_w}x{target_h}"
+        elif 'target_size' in context_info:
+            # Fallback to square for old format
+            size = context_info['target_size']
+            api_size = f"{size}x{size}"
+        else:
+            api_size = "1024x1024"  # Default
+        
+        print(f"DEBUG: Using OpenAI API size: {api_size}")
+        
         api_success, api_message, api_response = self._call_openai_inpaint(
-            image_data, mask_data, prompt, api_key
+            image_data, mask_data, prompt, api_key, size=api_size
         )
 
         if api_success:
