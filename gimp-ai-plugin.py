@@ -1578,18 +1578,26 @@ class GimpAIPlugin(Gimp.PlugIn):
             scaled_w, scaled_h = padding_info['scaled_size']
             pad_left, pad_top, pad_right, pad_bottom = padding_info['padding']
             
-            orig_width = image.get_width()
-            orig_height = image.get_height()
+            # Determine the correct base size for mask creation
+            if context_info.get('mode') == 'full':
+                # Full image mode: create mask at full image size
+                mask_base_width = image.get_width()
+                mask_base_height = image.get_height()
+                print(f"DEBUG: Creating mask at full image size {mask_base_width}x{mask_base_height}, then scaling like image")
+            else:
+                # Focused/contextual mode: create mask at extract region size
+                extract_region = context_info['extract_region']
+                mask_base_width = extract_region[2]
+                mask_base_height = extract_region[3]
+                print(f"DEBUG: Creating mask at extract region size {mask_base_width}x{mask_base_height}, then scaling like image")
             
-            print(f"DEBUG: Creating mask at full size {orig_width}x{orig_height}, then scaling like image")
-            
-            # Use the EXISTING working mask creation logic, but at original size
-            mask_image = Gimp.Image.new(orig_width, orig_height, Gimp.ImageBaseType.RGB)
+            # Use the EXISTING working mask creation logic, but at correct base size
+            mask_image = Gimp.Image.new(mask_base_width, mask_base_height, Gimp.ImageBaseType.RGB)
             mask_layer = Gimp.Layer.new(
                 mask_image,
                 "selection_mask", 
-                orig_width,
-                orig_height,
+                mask_base_width,
+                mask_base_height,
                 Gimp.ImageType.RGBA_IMAGE,
                 100.0,
                 Gimp.LayerMode.NORMAL,
@@ -1626,7 +1634,7 @@ class GimpAIPlugin(Gimp.PlugIn):
             
             mask_shadow_buffer.flush()
             mask_layer.merge_shadow(True)
-            mask_layer.update(0, 0, orig_width, orig_height)
+            mask_layer.update(0, 0, mask_base_width, mask_base_height)
             
             # Make white areas transparent (WORKING code)
             transparency_graph = Gegl.Node()
@@ -1649,7 +1657,7 @@ class GimpAIPlugin(Gimp.PlugIn):
             
             shadow_buffer.flush()
             mask_layer.merge_shadow(True)
-            mask_layer.update(0, 0, orig_width, orig_height)
+            mask_layer.update(0, 0, mask_base_width, mask_base_height)
             
             print(f"DEBUG: Created mask at original size with transparent selection areas")
             
@@ -1726,8 +1734,8 @@ class GimpAIPlugin(Gimp.PlugIn):
                 raise Exception("Failed to save selection as channel")
             print("DEBUG: Saved selection as channel for pixel copying")
 
-            # For full image with padding, use simplified approach that mirrors image processing
-            if 'padding_info' in context_info and context_info.get('mode') == 'full':
+            # For any mode with padding, use simplified approach that mirrors image processing
+            if 'padding_info' in context_info:
                 return self._create_full_size_mask_then_scale(image, selection_channel, context_info)
 
             # Step 2: Create target-shaped mask image (RGBA for transparency)
@@ -2667,8 +2675,8 @@ class GimpAIPlugin(Gimp.PlugIn):
                 ):
                     scaled_img = ai_result_img.duplicate()
                     
-                    # For full image mode with padding, remove padding first, then scale
-                    if 'padding_info' in context_info and context_info.get('mode') == 'full':
+                    # For any mode with padding, remove padding first, then scale
+                    if 'padding_info' in context_info:
                         padding_info = context_info['padding_info']
                         pad_left, pad_top, pad_right, pad_bottom = padding_info['padding']
                         scaled_w, scaled_h = padding_info['scaled_size']

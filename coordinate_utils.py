@@ -148,6 +148,64 @@ def extract_context_with_selection(img_width, img_height, sel_x1, sel_y1, sel_x2
     
     # Determine optimal shape for context
     target_shape = get_optimal_openai_shape(ctx_width, ctx_height)
+    target_aspect = target_shape[0] / target_shape[1]
+    current_aspect = ctx_width / ctx_height if ctx_height > 0 else 1.0
+    
+    # Try to extend extract region to match target aspect ratio
+    # This avoids padding when possible by using more of the available image
+    if abs(current_aspect - target_aspect) > 0.01:  # Only if aspect ratios differ significantly
+        if target_aspect > current_aspect:
+            # Need wider region: extend horizontally if possible
+            target_width = int(ctx_height * target_aspect)
+            width_diff = target_width - ctx_width
+            
+            # Try to extend equally on both sides
+            left_extend = width_diff // 2
+            right_extend = width_diff - left_extend
+            
+            new_ctx_x1 = max(0, ctx_x1 - left_extend)
+            new_ctx_x2 = min(img_width, ctx_x2 + right_extend)
+            
+            # If we hit boundaries, try to extend more on the available side
+            if new_ctx_x1 == 0 and new_ctx_x2 < img_width:
+                # Hit left boundary, extend right more
+                remaining = target_width - (new_ctx_x2 - new_ctx_x1)
+                new_ctx_x2 = min(img_width, new_ctx_x2 + remaining)
+            elif new_ctx_x2 == img_width and new_ctx_x1 > 0:
+                # Hit right boundary, extend left more  
+                remaining = target_width - (new_ctx_x2 - new_ctx_x1)
+                new_ctx_x1 = max(0, new_ctx_x1 - remaining)
+                
+            ctx_x1, ctx_x2 = new_ctx_x1, new_ctx_x2
+            
+        else:
+            # Need taller region: extend vertically if possible
+            target_height = int(ctx_width / target_aspect)
+            height_diff = target_height - ctx_height
+            
+            # Try to extend equally on both sides
+            top_extend = height_diff // 2
+            bottom_extend = height_diff - top_extend
+            
+            new_ctx_y1 = max(0, ctx_y1 - top_extend)
+            new_ctx_y2 = min(img_height, ctx_y2 + bottom_extend)
+            
+            # If we hit boundaries, try to extend more on the available side
+            if new_ctx_y1 == 0 and new_ctx_y2 < img_height:
+                # Hit top boundary, extend bottom more
+                remaining = target_height - (new_ctx_y2 - new_ctx_y1)
+                new_ctx_y2 = min(img_height, new_ctx_y2 + remaining)
+            elif new_ctx_y2 == img_height and new_ctx_y1 > 0:
+                # Hit bottom boundary, extend top more
+                remaining = target_height - (new_ctx_y2 - new_ctx_y1)
+                new_ctx_y1 = max(0, new_ctx_y1 - remaining)
+                
+            ctx_y1, ctx_y2 = new_ctx_y1, new_ctx_y2
+    
+    # Recalculate final dimensions
+    ctx_width = ctx_x2 - ctx_x1
+    ctx_height = ctx_y2 - ctx_y1
+    
     padding_info = calculate_padding_for_shape(ctx_width, ctx_height,
                                               target_shape[0], target_shape[1])
     
