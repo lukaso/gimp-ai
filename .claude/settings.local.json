@@ -25,7 +25,9 @@
       "WebSearch",
       "WebFetch(domain:help.openai.com)",
       "WebFetch(domain:schoenitzer.de)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "WebFetch(domain:docs.aimlapi.com)",
+      "WebFetch(domain:github.com)"
     ],
     "deny": [
       "Read(file_path:*/config.json)"

@@ -234,7 +234,9 @@ class GimpAIPlugin(Gimp.PlugIn):
         # Fallback to last used mode from config
         return self.config.get("last_mode", "contextual")
 
-    def _show_prompt_dialog(self, title="AI Prompt", default_text="", show_mode_selection=True):
+    def _show_prompt_dialog(
+        self, title="AI Prompt", default_text="", show_mode_selection=True, image=None
+    ):
         """Show a GIMP UI dialog to get user input for AI prompt"""
         # Use last prompt as default if available, otherwise use provided default
         if not default_text:
@@ -282,34 +284,36 @@ class GimpAIPlugin(Gimp.PlugIn):
             # Check API key and show warning if missing
             api_key = self._get_api_key()
             api_warning_bar = None
-            
+
             if not api_key:
                 # Create warning info bar
                 api_warning_bar = Gtk.InfoBar()
                 api_warning_bar.set_message_type(Gtk.MessageType.WARNING)
                 api_warning_bar.set_show_close_button(False)
-                
+
                 # Warning message
                 warning_label = Gtk.Label()
                 warning_label.set_markup("⚠️ OpenAI API key not configured")
                 warning_label.set_halign(Gtk.Align.START)
-                
+
                 # Configure button - connect to main dialog response
-                configure_button = api_warning_bar.add_button("Configure Now", Gtk.ResponseType.APPLY)
-                
+                configure_button = api_warning_bar.add_button(
+                    "Configure Now", Gtk.ResponseType.APPLY
+                )
+
                 # Connect the InfoBar response to the main dialog
                 def on_configure_clicked(infobar, response_id):
                     if response_id == Gtk.ResponseType.APPLY:
                         dialog.response(Gtk.ResponseType.APPLY)
-                
+
                 api_warning_bar.connect("response", on_configure_clicked)
-                
+
                 # Add label to info bar content area
                 info_content = api_warning_bar.get_content_area()
                 info_content.pack_start(warning_label, False, False, 0)
-                
+
                 content_area.pack_start(api_warning_bar, False, False, 5)
-                
+
                 # Disable OK button when no API key
                 ok_button.set_sensitive(False)
                 ok_button.set_label("Configure & Continue")
@@ -370,7 +374,8 @@ class GimpAIPlugin(Gimp.PlugIn):
 
                 # Radio buttons for mode selection
                 focused_radio = Gtk.RadioButton.new_with_label(
-                    None, "Focused (High Detail) - Best for small edits, maximum resolution"
+                    None,
+                    "Focused (High Detail) - Best for small edits, maximum resolution",
                 )
                 focused_radio.set_name("contextual")
                 mode_box.pack_start(focused_radio, False, False, 2)
@@ -440,7 +445,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                     if not current_api_key:
                         print("DEBUG: OK clicked but no API key, opening settings")
                         self._show_settings_dialog(dialog)
-                        
+
                         # Re-check API key after settings dialog
                         current_api_key = self._get_api_key()
                         if current_api_key:
@@ -453,7 +458,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                         else:
                             print("DEBUG: API key still not configured")
                             continue  # Keep dialog open
-                    
+
                     # Now validate the prompt
                     start_iter = text_buffer.get_start_iter()
                     end_iter = text_buffer.get_end_iter()
@@ -488,7 +493,11 @@ class GimpAIPlugin(Gimp.PlugIn):
                     selected_mode = "contextual"  # default
                     if show_mode_selection and full_radio and full_radio.get_active():
                         selected_mode = "full_image"
-                    elif show_mode_selection and focused_radio and focused_radio.get_active():
+                    elif (
+                        show_mode_selection
+                        and focused_radio
+                        and focused_radio.get_active()
+                    ):
                         selected_mode = "contextual"
                     # If no mode selection UI, use default "contextual" (for image generator)
 
@@ -508,7 +517,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 elif response == Gtk.ResponseType.APPLY:  # Configure Now button
                     print("DEBUG: Configure Now button clicked")
                     self._show_settings_dialog(dialog)
-                    
+
                     # Re-check API key after settings dialog
                     api_key = self._get_api_key()
                     if api_key:
@@ -534,6 +543,206 @@ class GimpAIPlugin(Gimp.PlugIn):
             print(f"DEBUG: Dialog error: {e}")
             # Fallback to default prompt if dialog fails
             return default_text if default_text else "fill this area naturally"
+
+    def _show_composite_dialog(self, image):
+        """Show dedicated dialog for Layer Composite with visible layers info"""
+        try:
+            print("DEBUG: Creating Layer Composite dialog")
+
+            # Get visible layers (image.get_layers() returns top-to-bottom order)
+            all_layers = image.get_layers()
+            visible_layers = [layer for layer in all_layers if layer.get_visible()]
+
+            print(
+                f"DEBUG: Found {len(all_layers)} total layers, {len(visible_layers)} visible"
+            )
+            print(
+                f"DEBUG: Layer order (top-to-bottom): {[layer.get_name() for layer in visible_layers]}"
+            )
+
+            if len(visible_layers) < 2:
+                print("DEBUG: Insufficient visible layers for composite")
+                Gimp.message(
+                    "❌ Layer Composite requires at least 2 visible layers.\n\nPlease make sure at least 2 layers are visible (eye icon shown) and try again."
+                )
+                return None
+
+            if len(visible_layers) > 16:
+                print(
+                    f"DEBUG: Too many visible layers ({len(visible_layers)}), will use first 16"
+                )
+                visible_layers = visible_layers[:16]
+
+            # Initialize GIMP UI system
+            if not hasattr(self, "_ui_initialized"):
+                GimpUi.init("gimp-ai-plugin")
+                self._ui_initialized = True
+
+            # Create dialog
+            use_header_bar = Gtk.Settings.get_default().get_property(
+                "gtk-dialogs-use-header"
+            )
+            dialog = GimpUi.Dialog(
+                use_header_bar=use_header_bar, title="Layer Composite"
+            )
+            dialog.set_default_size(500, 400)
+            dialog.set_resizable(True)
+
+            # Add buttons
+            dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+            ok_button = dialog.add_button("Composite Layers", Gtk.ResponseType.OK)
+            ok_button.set_can_default(True)
+            ok_button.grab_default()
+
+            # Content area
+            content_area = dialog.get_content_area()
+            content_area.set_spacing(15)
+            content_area.set_margin_left(20)
+            content_area.set_margin_right(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+
+            # Title and info
+            title_label = Gtk.Label()
+            title_label.set_markup("<b>Layer Composite</b>")
+            title_label.set_halign(Gtk.Align.START)
+            content_area.pack_start(title_label, False, False, 0)
+
+            info_label = Gtk.Label()
+            info_label.set_text(
+                f"Will composite {len(visible_layers)} visible layers using AI:"
+            )
+            info_label.set_halign(Gtk.Align.START)
+            content_area.pack_start(info_label, False, False, 0)
+
+            # Layer list (read-only, just for user info)
+            layer_frame = Gtk.Frame(label="Layers to composite:")
+            content_area.pack_start(layer_frame, False, False, 5)
+
+            layer_box = Gtk.VBox()
+            layer_box.set_margin_left(10)
+            layer_box.set_margin_right(10)
+            layer_box.set_margin_top(5)
+            layer_box.set_margin_bottom(10)
+            layer_frame.add(layer_box)
+
+            for i, layer in enumerate(visible_layers):
+                layer_label = Gtk.Label()
+                if i == len(visible_layers) - 1:  # Last layer is the base (bottom) layer
+                    layer_label.set_text(f"Base: {layer.get_name()} (primary layer)")
+                else:
+                    layer_label.set_text(f"Layer {len(visible_layers) - 1 - i}: {layer.get_name()}")
+                layer_label.set_halign(Gtk.Align.START)
+                layer_box.pack_start(layer_label, False, False, 2)
+
+            # Prompt history dropdown
+            history = self._get_prompt_history()
+            history_combo = None
+            if history:
+                history_label = Gtk.Label(label="Recent prompts:")
+                history_label.set_halign(Gtk.Align.START)
+                content_area.pack_start(history_label, False, False, 0)
+
+                history_combo = Gtk.ComboBoxText()
+                history_combo.append_text("Select from recent prompts...")
+                for prompt in history:
+                    # Truncate long prompts for display
+                    display_prompt = prompt[:60] + "..." if len(prompt) > 60 else prompt
+                    history_combo.append_text(display_prompt)
+                history_combo.set_active(0)
+                content_area.pack_start(history_combo, False, False, 0)
+
+            # Prompt text area
+            prompt_label = Gtk.Label(label="Describe how to combine these layers:")
+            prompt_label.set_halign(Gtk.Align.START)
+            content_area.pack_start(prompt_label, False, False, 0)
+
+            scrolled_window = Gtk.ScrolledWindow()
+            scrolled_window.set_policy(
+                Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC
+            )
+            scrolled_window.set_min_content_height(100)
+
+            text_view = Gtk.TextView()
+            text_view.set_wrap_mode(Gtk.WrapMode.WORD)
+            text_view.set_border_width(8)
+
+            # Set default prompt
+            default_prompt = "Combine these layers naturally into a cohesive image"
+            text_buffer = text_view.get_buffer()
+            text_buffer.set_text(default_prompt)
+
+            scrolled_window.add(text_view)
+            content_area.pack_start(scrolled_window, True, True, 0)
+
+            # Connect history selection to populate text view
+            if history_combo:
+
+                def on_history_changed(combo):
+                    active = combo.get_active()
+                    if active > 0:  # Skip the placeholder item
+                        selected_prompt = history[
+                            active - 1
+                        ]  # -1 because of placeholder
+                        text_buffer.set_text(selected_prompt)
+                        text_view.grab_focus()
+                        text_buffer.select_range(
+                            text_buffer.get_start_iter(), text_buffer.get_end_iter()
+                        )
+
+                history_combo.connect("changed", on_history_changed)
+
+            # Mask option
+            mask_checkbox = Gtk.CheckButton()
+            mask_checkbox.set_label("Include selection mask (applies to base layer)")
+            mask_checkbox.set_active(False)
+            content_area.pack_start(mask_checkbox, False, False, 5)
+
+            # Show dialog
+            content_area.show_all()
+            text_view.grab_focus()
+
+            # Run dialog loop
+            while True:
+                response = dialog.run()
+
+                if response == Gtk.ResponseType.OK:
+                    # Get prompt text
+                    start_iter = text_buffer.get_start_iter()
+                    end_iter = text_buffer.get_end_iter()
+                    prompt = text_buffer.get_text(start_iter, end_iter, False)
+
+                    if not prompt or not prompt.strip():
+                        # Show error
+                        error_dialog = Gtk.MessageDialog(
+                            parent=dialog,
+                            flags=Gtk.DialogFlags.MODAL,
+                            message_type=Gtk.MessageType.WARNING,
+                            buttons=Gtk.ButtonsType.OK,
+                            text="Please enter a prompt description",
+                        )
+                        error_dialog.run()
+                        error_dialog.destroy()
+                        continue
+
+                    use_mask = mask_checkbox.get_active()
+                    print(
+                        f"DEBUG: Composite dialog OK - {len(visible_layers)} layers, mask: {use_mask}"
+                    )
+
+                    # Save prompt to history
+                    self._add_to_prompt_history(prompt.strip())
+
+                    dialog.destroy()
+                    return (prompt.strip(), visible_layers, use_mask)
+
+                else:
+                    dialog.destroy()
+                    return None
+
+        except Exception as e:
+            print(f"DEBUG: Composite dialog error: {e}")
+            return None
 
     def _show_settings_dialog(self, parent_dialog):
         """Show settings dialog with write-only API key field"""
@@ -690,7 +899,7 @@ class GimpAIPlugin(Gimp.PlugIn):
         try:
             print("DEBUG: Extracting context region for AI with optimal shape")
 
-            # Get parameters for the extract region  
+            # Get parameters for the extract region
             ctx_x1, ctx_y1, ctx_width, ctx_height = context_info["extract_region"]
             target_shape = context_info["target_shape"]
             target_width, target_height = target_shape
@@ -762,45 +971,59 @@ class GimpAIPlugin(Gimp.PlugIn):
             # Scale and pad to target shape for OpenAI (preserve aspect ratio)
             if ctx_width != target_width or ctx_height != target_height:
                 # Get padding info to preserve aspect ratio
-                if 'padding_info' in context_info:
-                    padding_info = context_info['padding_info']
-                    scale_factor = padding_info['scale_factor']
-                    scaled_w, scaled_h = padding_info['scaled_size']
-                    pad_left, pad_top, pad_right, pad_bottom = padding_info['padding']
-                    
+                if "padding_info" in context_info:
+                    padding_info = context_info["padding_info"]
+                    scale_factor = padding_info["scale_factor"]
+                    scaled_w, scaled_h = padding_info["scaled_size"]
+                    pad_left, pad_top, pad_right, pad_bottom = padding_info["padding"]
+
                     print(f"DEBUG: Using aspect-ratio preserving scaling:")
                     print(f"  Scale factor: {scale_factor}")
                     print(f"  Scaled size: {scaled_w}x{scaled_h}")
-                    print(f"  Padding: left={pad_left}, top={pad_top}, right={pad_right}, bottom={pad_bottom}")
-                    
+                    print(
+                        f"  Padding: left={pad_left}, top={pad_top}, right={pad_right}, bottom={pad_bottom}"
+                    )
+
                     # First scale preserving aspect ratio
                     if scale_factor != 1.0:
                         extract_image.scale(scaled_w, scaled_h)
-                        print(f"DEBUG: Scaled to {scaled_w}x{scaled_h} preserving aspect ratio")
-                    
+                        print(
+                            f"DEBUG: Scaled to {scaled_w}x{scaled_h} preserving aspect ratio"
+                        )
+
                     # Then add padding to reach target dimensions
                     if pad_left > 0 or pad_top > 0 or pad_right > 0 or pad_bottom > 0:
                         # Resize canvas to add padding
-                        extract_image.resize(target_width, target_height, pad_left, pad_top)
-                        print(f"DEBUG: Added padding to reach {target_width}x{target_height}")
+                        extract_image.resize(
+                            target_width, target_height, pad_left, pad_top
+                        )
+                        print(
+                            f"DEBUG: Added padding to reach {target_width}x{target_height}"
+                        )
                 else:
                     # Fallback: calculate padding on the fly
-                    padding_info = calculate_padding_for_shape(ctx_width, ctx_height, target_width, target_height)
-                    scale_factor = padding_info['scale_factor']
-                    scaled_w, scaled_h = padding_info['scaled_size']
-                    pad_left, pad_top, pad_right, pad_bottom = padding_info['padding']
-                    
+                    padding_info = calculate_padding_for_shape(
+                        ctx_width, ctx_height, target_width, target_height
+                    )
+                    scale_factor = padding_info["scale_factor"]
+                    scaled_w, scaled_h = padding_info["scaled_size"]
+                    pad_left, pad_top, pad_right, pad_bottom = padding_info["padding"]
+
                     print(f"DEBUG: Calculating padding on the fly:")
                     print(f"  Scale factor: {scale_factor}")
-                    print(f"  Padding: left={pad_left}, top={pad_top}, right={pad_right}, bottom={pad_bottom}")
-                    
+                    print(
+                        f"  Padding: left={pad_left}, top={pad_top}, right={pad_right}, bottom={pad_bottom}"
+                    )
+
                     # First scale preserving aspect ratio
                     extract_image.scale(scaled_w, scaled_h)
-                    
+
                     # Then add padding
                     extract_image.resize(target_width, target_height, pad_left, pad_top)
-                    
-                print(f"DEBUG: Final extract image size: {target_width}x{target_height} (aspect ratio preserved)")
+
+                print(
+                    f"DEBUG: Final extract image size: {target_width}x{target_height} (aspect ratio preserved)"
+                )
 
             # Export to PNG
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
@@ -1233,11 +1456,18 @@ class GimpAIPlugin(Gimp.PlugIn):
             return {
                 "mode": "full",
                 "selection_bounds": sel_bounds,
-                "extract_region": (0, 0, orig_width, orig_height),  # Extract entire image
+                "extract_region": (
+                    0,
+                    0,
+                    orig_width,
+                    orig_height,
+                ),  # Extract entire image
                 "target_shape": target_shape,
                 "target_size": max(target_shape),  # For backward compatibility
                 "needs_padding": True,
-                "padding_info": calculate_padding_for_shape(orig_width, orig_height, target_shape[0], target_shape[1]),
+                "padding_info": calculate_padding_for_shape(
+                    orig_width, orig_height, target_shape[0], target_shape[1]
+                ),
                 "has_selection": has_real_selection,
                 "original_bounds": (full_x1, full_y1, full_x2, full_y2),
             }
@@ -1264,8 +1494,14 @@ class GimpAIPlugin(Gimp.PlugIn):
                 print("DEBUG: No selection found, using center area")
                 # Use new shape-aware function with no selection
                 return extract_context_with_selection(
-                    img_width, img_height, 0, 0, 0, 0, 
-                    mode='focused', has_selection=False
+                    img_width,
+                    img_height,
+                    0,
+                    0,
+                    0,
+                    0,
+                    mode="focused",
+                    has_selection=False,
                 )
 
             # Extract selection bounds
@@ -1288,40 +1524,46 @@ class GimpAIPlugin(Gimp.PlugIn):
                 sel_y1,
                 sel_x2,
                 sel_y2,
-                mode='focused',
+                mode="focused",
                 has_selection=True,
             )
 
             # Log the optimal shape selected
             print(f"DEBUG: Optimal shape selected: {context_info['target_shape']}")
-            
+
             # Extract dimensions for any code that still expects target_size
-            target_w, target_h = context_info['target_shape']
-            context_info['target_size'] = max(target_w, target_h)
-            
+            target_w, target_h = context_info["target_shape"]
+            context_info["target_size"] = max(target_w, target_h)
+
             # Validate still works but now with shape support
             is_valid, error_msg = validate_context_info(context_info)
             if not is_valid:
                 print(f"DEBUG: Context validation failed: {error_msg}")
                 # Fallback to center extraction
                 return extract_context_with_selection(
-                    img_width, img_height, 0, 0, 0, 0,
-                    mode='focused', has_selection=False
+                    img_width,
+                    img_height,
+                    0,
+                    0,
+                    0,
+                    0,
+                    mode="focused",
+                    has_selection=False,
                 )
 
             # Add debug output for the calculated values
-            extract_x1, extract_y1, extract_width, extract_height = context_info["extract_region"]
+            extract_x1, extract_y1, extract_width, extract_height = context_info[
+                "extract_region"
+            ]
             target_w, target_h = context_info["target_shape"]
-            
+
             print(
                 f"DEBUG: Extract region: ({extract_x1},{extract_y1}) to ({extract_x1+extract_width},{extract_y1+extract_height}), size: {extract_width}x{extract_height}"
             )
-            print(
-                f"DEBUG: Target shape for OpenAI: {target_w}x{target_h}"
-            )
-            
-            if 'padding_info' in context_info:
-                padding_info = context_info['padding_info']
+            print(f"DEBUG: Target shape for OpenAI: {target_w}x{target_h}")
+
+            if "padding_info" in context_info:
+                padding_info = context_info["padding_info"]
                 print(f"DEBUG: Scale factor: {padding_info['scale_factor']}")
                 print(f"DEBUG: Padding: {padding_info['padding']}")
 
@@ -1331,7 +1573,7 @@ class GimpAIPlugin(Gimp.PlugIn):
             print(f"DEBUG: Context calculation failed: {e}")
             # Fallback to simple center extraction
             return extract_context_with_selection(
-                img_width, img_height, 0, 0, 0, 0, mode='focused', has_selection=False
+                img_width, img_height, 0, 0, 0, 0, mode="focused", has_selection=False
             )
 
     def _prepare_full_image(self, image):
@@ -1347,13 +1589,17 @@ class GimpAIPlugin(Gimp.PlugIn):
             # Get optimal OpenAI shape for this image
             target_shape = get_optimal_openai_shape(width, height)
             target_width, target_height = target_shape
-            
-            print(f"DEBUG: Optimal OpenAI shape selected: {target_width}x{target_height}")
+
+            print(
+                f"DEBUG: Optimal OpenAI shape selected: {target_width}x{target_height}"
+            )
 
             # Calculate padding info for this shape
-            padding_info = calculate_padding_for_shape(width, height, target_width, target_height)
-            scale = padding_info['scale_factor']
-            scaled_width, scaled_height = padding_info['scaled_size']
+            padding_info = calculate_padding_for_shape(
+                width, height, target_width, target_height
+            )
+            scale = padding_info["scale_factor"]
+            scaled_width, scaled_height = padding_info["scaled_size"]
 
             print(f"DEBUG: Scale factor: {scale:.3f}")
             print(f"DEBUG: Scaled size: {scaled_width}x{scaled_height}")
@@ -1365,7 +1611,11 @@ class GimpAIPlugin(Gimp.PlugIn):
                 "scaled_size": (scaled_width, scaled_height),
                 "scale_factor": scale,
                 "target_shape": target_shape,  # New: optimal shape tuple
-                "target_size": target_width if target_width == target_height else max(target_width, target_height),  # Old format fallback
+                "target_size": (
+                    target_width
+                    if target_width == target_height
+                    else max(target_width, target_height)
+                ),  # Old format fallback
                 "padding_info": padding_info,
                 "has_selection": True,  # Always true for this mode
             }
@@ -1459,6 +1709,169 @@ class GimpAIPlugin(Gimp.PlugIn):
         except Exception as e:
             print(f"DEBUG: Full image extraction failed: {e}")
             return False, f"Full image extraction failed: {str(e)}", None
+
+    def _prepare_layers_for_composite(self, selected_layers):
+        """Prepare multiple layers for OpenAI composite API - each layer as separate PNG"""
+        try:
+            print(f"DEBUG: Preparing {len(selected_layers)} layers for composite API")
+
+            layer_data_list = []
+
+            # Import coordinate utilities for optimal sizing
+            from coordinate_utils import get_optimal_openai_shape
+
+            # Process primary layer (bottom/first) with full optimization
+            primary_layer = selected_layers[0]
+            print(f"DEBUG: Processing primary layer: {primary_layer.get_name()}")
+
+            # Create temporary image with just the primary layer
+            primary_temp_image = Gimp.Image.new(
+                primary_layer.get_width(),
+                primary_layer.get_height(),
+                Gimp.ImageBaseType.RGB,
+            )
+
+            # Use GIMP's built-in layer copying - much more reliable than manual buffer operations
+            print(f"DEBUG: Copying primary layer using new_from_drawable method")
+            primary_layer_copy = Gimp.Layer.new_from_drawable(
+                primary_layer, primary_temp_image
+            )
+            primary_layer_copy.set_name("primary_copy")
+            primary_temp_image.insert_layer(primary_layer_copy, None, 0)
+            print("DEBUG: Primary layer copy completed via new_from_drawable")
+
+            # Get optimal shape for primary image (using existing logic)
+            primary_width = primary_temp_image.get_width()
+            primary_height = primary_temp_image.get_height()
+            optimal_shape = get_optimal_openai_shape(primary_width, primary_height)
+            target_width, target_height = optimal_shape
+
+            print(
+                f"DEBUG: Primary layer optimal shape: {primary_width}x{primary_height} -> {target_width}x{target_height}"
+            )
+
+            # Scale primary image to optimal shape
+            primary_temp_image.scale(target_width, target_height)
+            primary_layer_copy.scale(target_width, target_height, False)
+
+            # Export primary layer to PNG
+            primary_png_data = self._export_layer_to_png(primary_temp_image)
+            if primary_png_data:
+                layer_data_list.append(primary_png_data)
+                print(f"DEBUG: Primary layer exported: {len(primary_png_data)} bytes")
+
+            primary_temp_image.delete()
+
+            # Process additional layers - scale proportionally to match primary
+            for i, layer in enumerate(selected_layers[1:], 1):
+                print(f"DEBUG: Processing additional layer {i}: {layer.get_name()}")
+
+                # Create temporary image for this layer
+                temp_image = Gimp.Image.new(
+                    layer.get_width(), layer.get_height(), Gimp.ImageBaseType.RGB
+                )
+
+                # Use GIMP's built-in layer copying - much more reliable than manual buffer operations
+                print(
+                    f"DEBUG: Copying additional layer {i} using new_from_drawable method"
+                )
+                layer_copy = Gimp.Layer.new_from_drawable(layer, temp_image)
+                layer_copy.set_name(f"layer_copy_{i}")
+                temp_image.insert_layer(layer_copy, None, 0)
+                print(
+                    f"DEBUG: Additional layer {i} copy completed via new_from_drawable"
+                )
+
+                # Scale to match primary dimensions (proportional scaling)
+                scale_x = target_width / layer.get_width()
+                scale_y = target_height / layer.get_height()
+                scale_factor = min(scale_x, scale_y)  # Maintain aspect ratio
+
+                new_width = int(layer.get_width() * scale_factor)
+                new_height = int(layer.get_height() * scale_factor)
+
+                print(
+                    f"DEBUG: Scaling layer {i}: {layer.get_width()}x{layer.get_height()} -> {new_width}x{new_height}"
+                )
+
+                temp_image.scale(new_width, new_height)
+                layer_copy.scale(new_width, new_height, False)
+
+                # If smaller than target, pad with transparency
+                if new_width < target_width or new_height < target_height:
+                    offset_x = (target_width - new_width) // 2
+                    offset_y = (target_height - new_height) // 2
+                    temp_image.resize(target_width, target_height, offset_x, offset_y)
+
+                # Export layer to PNG
+                layer_png_data = self._export_layer_to_png(temp_image)
+                if layer_png_data:
+                    layer_data_list.append(layer_png_data)
+                    print(
+                        f"DEBUG: Additional layer {i} exported: {len(layer_png_data)} bytes"
+                    )
+
+                temp_image.delete()
+
+            print(
+                f"DEBUG: Successfully prepared {len(layer_data_list)} layers for composite"
+            )
+            return (
+                True,
+                f"Prepared {len(layer_data_list)} layers",
+                layer_data_list,
+                optimal_shape,
+            )
+
+        except Exception as e:
+            print(f"DEBUG: Layer preparation failed: {e}")
+            return False, f"Layer preparation failed: {str(e)}", None, None
+
+    def _export_layer_to_png(self, temp_image):
+        """Helper function to export a GIMP image to PNG bytes"""
+        try:
+            import tempfile
+            import os
+
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+                temp_path = temp_file.name
+
+            # Export using GIMP's PNG export
+            file = Gio.File.new_for_path(temp_path)
+            pdb_proc = Gimp.get_pdb().lookup_procedure("file-png-export")
+            pdb_config = pdb_proc.create_config()
+            pdb_config.set_property("run-mode", Gimp.RunMode.NONINTERACTIVE)
+            pdb_config.set_property("image", temp_image)
+            pdb_config.set_property("file", file)
+            pdb_config.set_property("options", None)
+            result = pdb_proc.run(pdb_config)
+
+            if result.index(0) != Gimp.PDBStatusType.SUCCESS:
+                os.unlink(temp_path)
+                return None
+
+            # Read the PNG data
+            with open(temp_path, "rb") as f:
+                png_data = f.read()
+
+            # Debug the exported PNG
+            print(f"DEBUG: Exported PNG size: {len(png_data)} bytes")
+            print(
+                f"DEBUG: Image dimensions: {temp_image.get_width()}x{temp_image.get_height()}"
+            )
+            print(
+                f"DEBUG: Expected raw size: {temp_image.get_width() * temp_image.get_height() * 4} bytes (RGBA)"
+            )
+            print(
+                f"DEBUG: Compression ratio: {len(png_data) / (temp_image.get_width() * temp_image.get_height() * 4):.4f}"
+            )
+
+            os.unlink(temp_path)
+            return png_data
+
+        except Exception as e:
+            print(f"DEBUG: PNG export failed: {e}")
+            return None
 
     def _create_full_image_mask(self, image, selection_bounds, context_info):
         """Create mask for full image with selection area marked for transformation"""
@@ -1571,31 +1984,37 @@ class GimpAIPlugin(Gimp.PlugIn):
     def _create_full_size_mask_then_scale(self, image, selection_channel, context_info):
         """Create mask at full original size, then scale/pad using same operations as image"""
         try:
-            target_shape = context_info['target_shape']
+            target_shape = context_info["target_shape"]
             target_width, target_height = target_shape
-            padding_info = context_info['padding_info']
-            scale_factor = padding_info['scale_factor']
-            scaled_w, scaled_h = padding_info['scaled_size']
-            pad_left, pad_top, pad_right, pad_bottom = padding_info['padding']
-            
+            padding_info = context_info["padding_info"]
+            scale_factor = padding_info["scale_factor"]
+            scaled_w, scaled_h = padding_info["scaled_size"]
+            pad_left, pad_top, pad_right, pad_bottom = padding_info["padding"]
+
             # Determine the correct base size for mask creation
-            if context_info.get('mode') == 'full':
+            if context_info.get("mode") == "full":
                 # Full image mode: create mask at full image size
                 mask_base_width = image.get_width()
                 mask_base_height = image.get_height()
-                print(f"DEBUG: Creating mask at full image size {mask_base_width}x{mask_base_height}, then scaling like image")
+                print(
+                    f"DEBUG: Creating mask at full image size {mask_base_width}x{mask_base_height}, then scaling like image"
+                )
             else:
                 # Focused/contextual mode: create mask at extract region size
-                extract_region = context_info['extract_region']
+                extract_region = context_info["extract_region"]
                 mask_base_width = extract_region[2]
                 mask_base_height = extract_region[3]
-                print(f"DEBUG: Creating mask at extract region size {mask_base_width}x{mask_base_height}, then scaling like image")
-            
+                print(
+                    f"DEBUG: Creating mask at extract region size {mask_base_width}x{mask_base_height}, then scaling like image"
+                )
+
             # Use the EXISTING working mask creation logic, but at correct base size
-            mask_image = Gimp.Image.new(mask_base_width, mask_base_height, Gimp.ImageBaseType.RGB)
+            mask_image = Gimp.Image.new(
+                mask_base_width, mask_base_height, Gimp.ImageBaseType.RGB
+            )
             mask_layer = Gimp.Layer.new(
                 mask_image,
-                "selection_mask", 
+                "selection_mask",
                 mask_base_width,
                 mask_base_height,
                 Gimp.ImageType.RGBA_IMAGE,
@@ -1603,79 +2022,85 @@ class GimpAIPlugin(Gimp.PlugIn):
                 Gimp.LayerMode.NORMAL,
             )
             mask_image.insert_layer(mask_layer, None, 0)
-            
+
             # Fill with black (preserve areas)
             from gi.repository import Gegl
-            black_color = Gegl.Color.new("black") 
+
+            black_color = Gegl.Color.new("black")
             Gimp.context_set_foreground(black_color)
             mask_layer.edit_fill(Gimp.FillType.FOREGROUND)
-            
+
             # Copy selection shape exactly as the working code does
             selection_buffer = selection_channel.get_buffer()
             mask_shadow_buffer = mask_layer.get_shadow_buffer()
-            
+
             # Use the WORKING Gegl approach from the existing code
             graph = Gegl.Node()
-            
+
             mask_source = graph.create_child("gegl:buffer-source")
             mask_source.set_property("buffer", mask_layer.get_buffer())
-            
+
             selection_source = graph.create_child("gegl:buffer-source")
             selection_source.set_property("buffer", selection_buffer)
-            
+
             composite = graph.create_child("gegl:over")
             output = graph.create_child("gegl:write-buffer")
             output.set_property("buffer", mask_shadow_buffer)
-            
+
             mask_source.link(composite)
             selection_source.connect_to("output", composite, "aux")
             composite.link(output)
             output.process()
-            
+
             mask_shadow_buffer.flush()
             mask_layer.merge_shadow(True)
             mask_layer.update(0, 0, mask_base_width, mask_base_height)
-            
+
             # Make white areas transparent (WORKING code)
             transparency_graph = Gegl.Node()
             layer_buffer = mask_layer.get_buffer()
             shadow_buffer = mask_layer.get_shadow_buffer()
-            
+
             buffer_source = transparency_graph.create_child("gegl:buffer-source")
             buffer_source.set_property("buffer", layer_buffer)
-            
+
             color_to_alpha = transparency_graph.create_child("gegl:color-to-alpha")
             white_color = Gegl.Color.new("white")
             color_to_alpha.set_property("color", white_color)
-            
+
             buffer_write = transparency_graph.create_child("gegl:write-buffer")
             buffer_write.set_property("buffer", shadow_buffer)
-            
+
             buffer_source.link(color_to_alpha)
             color_to_alpha.link(buffer_write)
             buffer_write.process()
-            
+
             shadow_buffer.flush()
             mask_layer.merge_shadow(True)
             mask_layer.update(0, 0, mask_base_width, mask_base_height)
-            
-            print(f"DEBUG: Created mask at original size with transparent selection areas")
-            
-            # NOW scale using SAME operations as image  
+
+            print(
+                f"DEBUG: Created mask at original size with transparent selection areas"
+            )
+
+            # NOW scale using SAME operations as image
             if scale_factor != 1.0:
                 mask_image.scale(scaled_w, scaled_h)
                 print(f"DEBUG: Scaled mask to {scaled_w}x{scaled_h}")
-            
+
             if pad_left > 0 or pad_top > 0 or pad_right > 0 or pad_bottom > 0:
                 mask_image.resize(target_width, target_height, pad_left, pad_top)
-                print(f"DEBUG: Added padding to mask to reach {target_width}x{target_height}")
-            
+                print(
+                    f"DEBUG: Added padding to mask to reach {target_width}x{target_height}"
+                )
+
             # Export (same as working code)
             import tempfile
             import os
+
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
                 temp_filename = temp_file.name
-            
+
             file = Gio.File.new_for_path(temp_filename)
             pdb_proc = Gimp.get_pdb().lookup_procedure("file-png-export")
             pdb_config = pdb_proc.create_config()
@@ -1683,30 +2108,30 @@ class GimpAIPlugin(Gimp.PlugIn):
             pdb_config.set_property("image", mask_image)
             pdb_config.set_property("file", file)
             pdb_config.set_property("options", None)
-            
+
             result = pdb_proc.run(pdb_config)
-            
+
             if result.index(0) != Gimp.PDBStatusType.SUCCESS:
                 mask_image.delete()
                 image.remove_channel(selection_channel)
                 os.unlink(temp_filename)
                 raise Exception("PNG export failed")
-            
+
             with open(temp_filename, "rb") as f:
                 png_data = f.read()
-            
+
             os.unlink(temp_filename)
             mask_image.delete()
             image.remove_channel(selection_channel)
-            
+
             print(f"DEBUG: Created full-size-then-scaled mask: {len(png_data)} bytes")
             return png_data
-            
+
         except Exception as e:
             print(f"DEBUG: Full size mask creation failed: {e}")
-            if 'mask_image' in locals():
-                mask_image.delete()  
-            if 'selection_channel' in locals():
+            if "mask_image" in locals():
+                mask_image.delete()
+            if "selection_channel" in locals():
                 image.remove_channel(selection_channel)
             raise Exception(f"Full size mask creation failed: {e}")
 
@@ -1726,7 +2151,9 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             # Get extract region info
             ctx_x1, ctx_y1, ctx_width, ctx_height = context_info["extract_region"]
-            print(f"DEBUG: Extract region: ({ctx_x1},{ctx_y1}) size {ctx_width}x{ctx_height}")
+            print(
+                f"DEBUG: Extract region: ({ctx_x1},{ctx_y1}) size {ctx_width}x{ctx_height}"
+            )
 
             # Step 1: Save original selection as channel to preserve its exact shape
             selection_channel = Gimp.Selection.save(image)
@@ -1735,11 +2162,15 @@ class GimpAIPlugin(Gimp.PlugIn):
             print("DEBUG: Saved selection as channel for pixel copying")
 
             # For any mode with padding, use simplified approach that mirrors image processing
-            if 'padding_info' in context_info:
-                return self._create_full_size_mask_then_scale(image, selection_channel, context_info)
+            if "padding_info" in context_info:
+                return self._create_full_size_mask_then_scale(
+                    image, selection_channel, context_info
+                )
 
             # Step 2: Create target-shaped mask image (RGBA for transparency)
-            mask_image = Gimp.Image.new(target_width, target_height, Gimp.ImageBaseType.RGB)
+            mask_image = Gimp.Image.new(
+                target_width, target_height, Gimp.ImageBaseType.RGB
+            )
             if not mask_image:
                 image.remove_channel(selection_channel)
                 raise Exception("Failed to create mask image")
@@ -1788,20 +2219,31 @@ class GimpAIPlugin(Gimp.PlugIn):
             )  # where original image starts in context square
             # Calculate where the original image content appears in the final padded target shape
             # Account for both extract region and padding
-            if 'padding_info' in context_info:
-                padding_info = context_info['padding_info']
-                scale_factor = padding_info['scale_factor']
-                pad_left, pad_top, pad_right, pad_bottom = padding_info['padding']
-                
+            if "padding_info" in context_info:
+                padding_info = context_info["padding_info"]
+                scale_factor = padding_info["scale_factor"]
+                pad_left, pad_top, pad_right, pad_bottom = padding_info["padding"]
+
                 # Original content is scaled and then padded
-                img_end_x = min(target_width - pad_left - pad_right, int(orig_width * scale_factor))
-                img_end_y = min(target_height - pad_top - pad_bottom, int(orig_height * scale_factor))
-                
-                print(f"DEBUG: Accounting for padding in mask - scale={scale_factor}, padding=({pad_left},{pad_top},{pad_right},{pad_bottom})")
+                img_end_x = min(
+                    target_width - pad_left - pad_right, int(orig_width * scale_factor)
+                )
+                img_end_y = min(
+                    target_height - pad_top - pad_bottom,
+                    int(orig_height * scale_factor),
+                )
+
+                print(
+                    f"DEBUG: Accounting for padding in mask - scale={scale_factor}, padding=({pad_left},{pad_top},{pad_right},{pad_bottom})"
+                )
             else:
                 # Fallback to simple calculation
-                img_end_x = min(ctx_width, orig_width - ctx_x1 if ctx_x1 >= 0 else orig_width)
-                img_end_y = min(ctx_height, orig_height - ctx_y1 if ctx_y1 >= 0 else orig_height)
+                img_end_x = min(
+                    ctx_width, orig_width - ctx_x1 if ctx_x1 >= 0 else orig_width
+                )
+                img_end_y = min(
+                    ctx_height, orig_height - ctx_y1 if ctx_y1 >= 0 else orig_height
+                )
 
             print(
                 f"DEBUG: Original image appears at ({img_offset_x},{img_offset_y}) to ({img_end_x},{img_end_y}) in context square"
@@ -1834,14 +2276,16 @@ class GimpAIPlugin(Gimp.PlugIn):
                 # Source 2: Selection channel buffer (contains exact selection shape)
                 selection_source = graph.create_child("gegl:buffer-source")
                 selection_source.set_property("buffer", selection_buffer)
-                
+
                 # Scale selection if needed to match the final image scaling
-                if 'padding_info' in context_info:
-                    padding_info = context_info['padding_info']
-                    scale_factor = padding_info['scale_factor']
-                    
+                if "padding_info" in context_info:
+                    padding_info = context_info["padding_info"]
+                    scale_factor = padding_info["scale_factor"]
+
                     if abs(scale_factor - 1.0) > 0.001:  # Need scaling
-                        print(f"DEBUG: Scaling selection channel by factor {scale_factor}")
+                        print(
+                            f"DEBUG: Scaling selection channel by factor {scale_factor}"
+                        )
                         scale_op = graph.create_child("gegl:scale-ratio")
                         scale_op.set_property("x", float(scale_factor))
                         scale_op.set_property("y", float(scale_factor))
@@ -1854,15 +2298,17 @@ class GimpAIPlugin(Gimp.PlugIn):
 
                 # Translate selection to correct position in padded target shape
                 # For full image with padding, the selection has been scaled and needs padding offset
-                if 'padding_info' in context_info:
-                    padding_info = context_info['padding_info']
-                    pad_left, pad_top, pad_right, pad_bottom = padding_info['padding']
-                    
+                if "padding_info" in context_info:
+                    padding_info = context_info["padding_info"]
+                    pad_left, pad_top, pad_right, pad_bottom = padding_info["padding"]
+
                     # Selection has already been scaled, just add padding offset
                     translate_x = pad_left
                     translate_y = pad_top
-                    
-                    print(f"DEBUG: Mask translation for padded image: translate by ({translate_x},{translate_y})")
+
+                    print(
+                        f"DEBUG: Mask translation for padded image: translate by ({translate_x},{translate_y})"
+                    )
                 else:
                     # Original logic for non-padded extracts
                     translate_x = -ctx_x1
@@ -1871,7 +2317,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 translate = graph.create_child("gegl:translate")
                 translate.set_property("x", float(translate_x))
                 translate.set_property("y", float(translate_y))
-                
+
                 # Connect scaled selection through translate to composite
                 selection_input.link(translate)
 
@@ -1917,9 +2363,7 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             # Step 4: Mask is already at target shape, no scaling needed
             # (Previous version scaled square masks, but we now create masks at target shape)
-            print(
-                f"DEBUG: Mask created at target shape {target_width}x{target_height}"
-            )
+            print(f"DEBUG: Mask created at target shape {target_width}x{target_height}")
 
             # Step 4.5: Make selection areas transparent (the one simple change requested)
             # Current state: black background, white selection copied from channel
@@ -2385,7 +2829,7 @@ class GimpAIPlugin(Gimp.PlugIn):
             return self._create_simple_mask(width, height)
 
     def _create_multipart_data(self, fields, files):
-        """Create multipart form data for file upload"""
+        """Create multipart form data for file upload - supports image arrays"""
         import email.mime.multipart
         import email.mime.text
         import email.mime.application
@@ -2400,21 +2844,35 @@ class GimpAIPlugin(Gimp.PlugIn):
             body += f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode()
             body += f"{value}\r\n".encode()
 
-        # Add file fields
-        for key, (filename, file_data, content_type) in files.items():
-            body += f"--{boundary}\r\n".encode()
-            body += f'Content-Disposition: form-data; name="{key}"; filename="{filename}"\r\n'.encode()
-            body += f"Content-Type: {content_type}\r\n\r\n".encode()
-            body += file_data
-            body += b"\r\n"
+        # Add file fields - handle both single files and arrays
+        for key, file_data in files.items():
+            if key == "image" and isinstance(file_data, list):
+                # Handle image array for composite mode - use image[] array syntax
+                for i, (filename, data, content_type) in enumerate(file_data):
+                    body += f"--{boundary}\r\n".encode()
+                    body += f'Content-Disposition: form-data; name="image[]"; filename="{filename}"\r\n'.encode()
+                    body += f"Content-Type: {content_type}\r\n\r\n".encode()
+                    body += data
+                    body += b"\r\n"
+                print(f"DEBUG: Added {len(file_data)} images to multipart data")
+            else:
+                # Handle single file (like mask or single image)
+                filename, data, content_type = file_data
+                body += f"--{boundary}\r\n".encode()
+                body += f'Content-Disposition: form-data; name="{key}"; filename="{filename}"\r\n'.encode()
+                body += f"Content-Type: {content_type}\r\n\r\n".encode()
+                body += data
+                body += b"\r\n"
 
         # End boundary
         body += f"--{boundary}--\r\n".encode()
 
         return body, boundary
 
-    def _call_openai_inpaint(self, image_data, mask_data, prompt, api_key, size="1024x1024"):
-        """Call OpenAI GPT-Image-1 API for inpainting"""
+    def _call_openai_edit(
+        self, image_data, mask_data, prompt, api_key, size="1024x1024"
+    ):
+        """Call OpenAI GPT-Image-1 API for image editing (supports single image or array)"""
         try:
             print(f"DEBUG: Calling GPT-Image-1 API with prompt: {prompt}")
 
@@ -2425,8 +2883,27 @@ class GimpAIPlugin(Gimp.PlugIn):
             if not image_data:
                 return False, "Error: No image data provided", None
 
-            if not mask_data:
-                return False, "Error: No mask data provided", None
+            # Support both single image and array of images
+            is_array_mode = isinstance(image_data, list)
+
+            if is_array_mode:
+                print(f"DEBUG: Array mode: {len(image_data)} images provided")
+                if len(image_data) < 2:
+                    return (
+                        False,
+                        "Error: At least 2 images required for composite mode",
+                        None,
+                    )
+                if len(image_data) > 16:
+                    return False, "Error: Maximum 16 layers supported", None
+            else:
+                print("DEBUG: Single image mode")
+                if not mask_data:
+                    return (
+                        False,
+                        "Error: No mask data provided for single image mode",
+                        None,
+                    )
 
             if not api_key or api_key == "test-api-key":
                 print("DEBUG: No valid API key provided, returning mock response")
@@ -2453,72 +2930,219 @@ class GimpAIPlugin(Gimp.PlugIn):
                 "input_fidelity": "high",  # High fidelity for better results
             }
 
-            # Convert base64 image data back to bytes for the API
+            # Prepare files for API based on mode
             import base64
 
-            image_bytes = base64.b64decode(image_data)
+            files = {}
 
-            # Save debug copies of what we're sending to GPT-Image-1
-            debug_input_filename = (
-                f"/tmp/gpt-image-1_input_{len(image_bytes)}_bytes.png"
-            )
-            with open(debug_input_filename, "wb") as debug_file:
-                debug_file.write(image_bytes)
-            print(f"DEBUG: Saved input image to {debug_input_filename}")
+            if is_array_mode:
+                # Array mode - multiple images for composite (with same validation as single mode)
+                image_files = []
 
-            debug_mask_filename = f"/tmp/gpt-image-1_mask_{len(mask_data)}_bytes.png"
-            with open(debug_mask_filename, "wb") as debug_file:
-                debug_file.write(mask_data)
-            print(f"DEBUG: Saved mask to {debug_mask_filename}")
-
-            # Analyze both image formats by examining PNG headers
-            if image_bytes.startswith(b"\x89PNG"):
-                # Check color type in IHDR chunk (byte 25) and dimensions
-                if len(image_bytes) > 25:
-                    # Extract width and height from IHDR (bytes 16-23)
-                    img_width = int.from_bytes(image_bytes[16:20], "big")
-                    img_height = int.from_bytes(image_bytes[20:24], "big")
-                    color_type = image_bytes[25]
-                    format_names = {0: "L", 2: "RGB", 3: "P", 4: "LA", 6: "RGBA"}
-                    format_name = format_names.get(color_type, f"Unknown({color_type})")
+                for i, layer_data in enumerate(image_data):
+                    # Debug the input data format
                     print(
-                        f"DEBUG: Input image format: {format_name} (color type {color_type}) dimensions: {img_width}x{img_height}"
+                        f"DEBUG: Array input {i} - type: {type(layer_data)}, size: {len(layer_data) if hasattr(layer_data, '__len__') else 'N/A'}"
                     )
-                else:
-                    print("DEBUG: Input image PNG header too short")
-            else:
-                print("DEBUG: Input image is not PNG format!")
-
-            if mask_data.startswith(b"\x89PNG"):
-                # Check mask format and dimensions
-                if len(mask_data) > 25:
-                    # Extract width and height from IHDR (bytes 16-23)
-                    mask_width = int.from_bytes(mask_data[16:20], "big")
-                    mask_height = int.from_bytes(mask_data[20:24], "big")
-                    color_type = mask_data[25]
-                    format_names = {0: "L", 2: "RGB", 3: "P", 4: "LA", 6: "RGBA"}
-                    format_name = format_names.get(color_type, f"Unknown({color_type})")
-                    print(
-                        f"DEBUG: Mask format: {format_name} (color type {color_type}) dimensions: {mask_width}x{mask_height}"
-                    )
-                    print(f"DEBUG: Mask size: {len(mask_data)} bytes")
-
-                    # Check if dimensions match
-                    if img_width == mask_width and img_height == mask_height:
-                        print("DEBUG: ✅ Image and mask dimensions match!")
-                    else:
-                        print(
-                            f"DEBUG: ❌ DIMENSION MISMATCH! Image: {img_width}x{img_height}, Mask: {mask_width}x{mask_height}"
+                    if hasattr(layer_data, "startswith"):
+                        png_header = b"\x89PNG"
+                        has_png_header = (
+                            layer_data.startswith(png_header)
+                            if isinstance(layer_data, bytes)
+                            else "not bytes"
                         )
-                else:
-                    print("DEBUG: Mask PNG header too short")
-            else:
-                print("DEBUG: Mask is not PNG format!")
+                        print(
+                            f"DEBUG: Array input {i} - starts with PNG header: {has_png_header}"
+                        )
 
-            files = {
-                "image": ("image.png", image_bytes, "image/png"),
-                "mask": ("mask.png", mask_data, "image/png"),
-            }
+                    # Apply same validation as single image mode
+                    if isinstance(layer_data, str):
+                        # Base64 encoded data - decode it
+                        print(f"DEBUG: Array input {i} - decoding base64 string")
+                        layer_bytes = base64.b64decode(layer_data)
+                    else:
+                        # Already binary data
+                        print(f"DEBUG: Array input {i} - using binary data as-is")
+                        layer_bytes = layer_data
+
+                    # Create debug file for inspection (same as single mode)
+                    debug_filename = (
+                        f"/tmp/gpt-image-1_array_image_{i}_{len(layer_bytes)}_bytes.png"
+                    )
+                    with open(debug_filename, "wb") as debug_file:
+                        debug_file.write(layer_bytes)
+                    print(f"DEBUG: Saved array image {i} to {debug_filename}")
+
+                    # Validate PNG format (same as single mode)
+                    if layer_bytes.startswith(b"\x89PNG"):
+                        if len(layer_bytes) > 25:
+                            # Extract dimensions and format info
+                            img_width = int.from_bytes(layer_bytes[16:20], "big")
+                            img_height = int.from_bytes(layer_bytes[20:24], "big")
+                            color_type = layer_bytes[25]
+                            format_names = {
+                                0: "L",
+                                2: "RGB",
+                                3: "P",
+                                4: "LA",
+                                6: "RGBA",
+                            }
+                            format_name = format_names.get(
+                                color_type, f"Unknown({color_type})"
+                            )
+                            print(
+                                f"DEBUG: Array image {i} format: {format_name} (color type {color_type}) dimensions: {img_width}x{img_height}"
+                            )
+                        else:
+                            print(f"DEBUG: Array image {i} PNG header too short")
+                    else:
+                        print(f"DEBUG: Array image {i} is not PNG format!")
+
+                    image_files.append((f"image_{i}.png", layer_bytes, "image/png"))
+                    print(f"DEBUG: Added validated layer {i}: {len(layer_bytes)} bytes")
+
+                files["image"] = image_files
+
+                # Add mask if provided (applies to first image) - with same validation
+                if mask_data:
+                    # Create debug file for mask
+                    debug_mask_filename = (
+                        f"/tmp/gpt-image-1_array_mask_{len(mask_data)}_bytes.png"
+                    )
+                    with open(debug_mask_filename, "wb") as debug_file:
+                        debug_file.write(mask_data)
+                    print(f"DEBUG: Saved array mask to {debug_mask_filename}")
+
+                    # Validate mask format (same as single mode)
+                    if mask_data.startswith(b"\x89PNG"):
+                        if len(mask_data) > 25:
+                            mask_width = int.from_bytes(mask_data[16:20], "big")
+                            mask_height = int.from_bytes(mask_data[20:24], "big")
+                            color_type = mask_data[25]
+                            format_names = {
+                                0: "L",
+                                2: "RGB",
+                                3: "P",
+                                4: "LA",
+                                6: "RGBA",
+                            }
+                            format_name = format_names.get(
+                                color_type, f"Unknown({color_type})"
+                            )
+                            print(
+                                f"DEBUG: Array mask format: {format_name} (color type {color_type}) dimensions: {mask_width}x{mask_height}"
+                            )
+                            print(f"DEBUG: Array mask size: {len(mask_data)} bytes")
+
+                            # Check dimensions against first image (if available)
+                            if image_files:
+                                first_image_bytes = image_files[0][1]
+                                if (
+                                    first_image_bytes.startswith(b"\x89PNG")
+                                    and len(first_image_bytes) > 25
+                                ):
+                                    first_img_width = int.from_bytes(
+                                        first_image_bytes[16:20], "big"
+                                    )
+                                    first_img_height = int.from_bytes(
+                                        first_image_bytes[20:24], "big"
+                                    )
+                                    if (
+                                        first_img_width == mask_width
+                                        and first_img_height == mask_height
+                                    ):
+                                        print(
+                                            "DEBUG: ✅ Array mask and first image dimensions match!"
+                                        )
+                                    else:
+                                        print(
+                                            f"DEBUG: ❌ DIMENSION MISMATCH! First image: {first_img_width}x{first_img_height}, Mask: {mask_width}x{mask_height}"
+                                        )
+                        else:
+                            print("DEBUG: Array mask PNG header too short")
+                    else:
+                        print("DEBUG: Array mask is not PNG format!")
+
+                    files["mask"] = ("mask.png", mask_data, "image/png")
+                    print(
+                        f"DEBUG: Added validated mask: {len(mask_data)} bytes (applies to first image)"
+                    )
+
+                print(
+                    f"DEBUG: Prepared {len(image_files)} validated images for composite mode"
+                )
+
+            else:
+                # Single image mode - traditional inpainting
+                image_bytes = base64.b64decode(image_data)
+
+                # Save debug copies of what we're sending to GPT-Image-1
+                debug_input_filename = (
+                    f"/tmp/gpt-image-1_input_{len(image_bytes)}_bytes.png"
+                )
+                with open(debug_input_filename, "wb") as debug_file:
+                    debug_file.write(image_bytes)
+                print(f"DEBUG: Saved input image to {debug_input_filename}")
+
+                debug_mask_filename = (
+                    f"/tmp/gpt-image-1_mask_{len(mask_data)}_bytes.png"
+                )
+                with open(debug_mask_filename, "wb") as debug_file:
+                    debug_file.write(mask_data)
+                print(f"DEBUG: Saved mask to {debug_mask_filename}")
+
+                # Analyze both image formats by examining PNG headers
+                if image_bytes.startswith(b"\x89PNG"):
+                    # Check color type in IHDR chunk (byte 25) and dimensions
+                    if len(image_bytes) > 25:
+                        # Extract width and height from IHDR (bytes 16-23)
+                        img_width = int.from_bytes(image_bytes[16:20], "big")
+                        img_height = int.from_bytes(image_bytes[20:24], "big")
+                        color_type = image_bytes[25]
+                        format_names = {0: "L", 2: "RGB", 3: "P", 4: "LA", 6: "RGBA"}
+                        format_name = format_names.get(
+                            color_type, f"Unknown({color_type})"
+                        )
+                        print(
+                            f"DEBUG: Input image format: {format_name} (color type {color_type}) dimensions: {img_width}x{img_height}"
+                        )
+                    else:
+                        print("DEBUG: Input image PNG header too short")
+                else:
+                    print("DEBUG: Input image is not PNG format!")
+
+                if mask_data.startswith(b"\x89PNG"):
+                    # Check mask format and dimensions
+                    if len(mask_data) > 25:
+                        # Extract width and height from IHDR (bytes 16-23)
+                        mask_width = int.from_bytes(mask_data[16:20], "big")
+                        mask_height = int.from_bytes(mask_data[20:24], "big")
+                        color_type = mask_data[25]
+                        format_names = {0: "L", 2: "RGB", 3: "P", 4: "LA", 6: "RGBA"}
+                        format_name = format_names.get(
+                            color_type, f"Unknown({color_type})"
+                        )
+                        print(
+                            f"DEBUG: Mask format: {format_name} (color type {color_type}) dimensions: {mask_width}x{mask_height}"
+                        )
+                        print(f"DEBUG: Mask size: {len(mask_data)} bytes")
+
+                        # Check if dimensions match
+                        if img_width == mask_width and img_height == mask_height:
+                            print("DEBUG: ✅ Image and mask dimensions match!")
+                        else:
+                            print(
+                                f"DEBUG: ❌ DIMENSION MISMATCH! Image: {img_width}x{img_height}, Mask: {mask_width}x{mask_height}"
+                            )
+                    else:
+                        print("DEBUG: Mask PNG header too short")
+                else:
+                    print("DEBUG: Mask is not PNG format!")
+
+                files = {
+                    "image": ("image.png", image_bytes, "image/png"),
+                    "mask": ("mask.png", mask_data, "image/png"),
+                }
 
             body, boundary = self._create_multipart_data(fields, files)
 
@@ -2666,7 +3290,9 @@ class GimpAIPlugin(Gimp.PlugIn):
                 print(
                     f"DEBUG: Selection bounds: ({sel_x1},{sel_y1}) to ({sel_x2},{sel_y2})"
                 )
-                print(f"DEBUG: Extract region: ({ctx_x1},{ctx_y1}), size {ctx_width}x{ctx_height}")
+                print(
+                    f"DEBUG: Extract region: ({ctx_x1},{ctx_y1}), size {ctx_width}x{ctx_height}"
+                )
 
                 # Scale AI result back to extract region size if needed
                 if (
@@ -2674,28 +3300,40 @@ class GimpAIPlugin(Gimp.PlugIn):
                     or ai_layer.get_height() != ctx_height
                 ):
                     scaled_img = ai_result_img.duplicate()
-                    
+
                     # For any mode with padding, remove padding first, then scale
-                    if 'padding_info' in context_info:
-                        padding_info = context_info['padding_info']
-                        pad_left, pad_top, pad_right, pad_bottom = padding_info['padding']
-                        scaled_w, scaled_h = padding_info['scaled_size']
-                        
-                        print(f"DEBUG: Removing padding from AI result: crop to {scaled_w}x{scaled_h}")
-                        print(f"DEBUG: Padding to remove: left={pad_left}, top={pad_top}, right={pad_right}, bottom={pad_bottom}")
-                        
+                    if "padding_info" in context_info:
+                        padding_info = context_info["padding_info"]
+                        pad_left, pad_top, pad_right, pad_bottom = padding_info[
+                            "padding"
+                        ]
+                        scaled_w, scaled_h = padding_info["scaled_size"]
+
+                        print(
+                            f"DEBUG: Removing padding from AI result: crop to {scaled_w}x{scaled_h}"
+                        )
+                        print(
+                            f"DEBUG: Padding to remove: left={pad_left}, top={pad_top}, right={pad_right}, bottom={pad_bottom}"
+                        )
+
                         # Crop to remove padding (get the actual content without black bars)
                         scaled_img.crop(scaled_w, scaled_h, pad_left, pad_top)
-                        print(f"DEBUG: Cropped AI result to {scaled_w}x{scaled_h} (removed padding)")
-                        
+                        print(
+                            f"DEBUG: Cropped AI result to {scaled_w}x{scaled_h} (removed padding)"
+                        )
+
                         # Now scale the unpadded result to original size
                         scaled_img.scale(ctx_width, ctx_height)
-                        print(f"DEBUG: Scaled unpadded result to original size: {ctx_width}x{ctx_height}")
+                        print(
+                            f"DEBUG: Scaled unpadded result to original size: {ctx_width}x{ctx_height}"
+                        )
                     else:
-                        # Normal scaling for non-padded results  
+                        # Normal scaling for non-padded results
                         scaled_img.scale(ctx_width, ctx_height)
-                        print(f"DEBUG: Scaled AI result to extract region size: {ctx_width}x{ctx_height}")
-                    
+                        print(
+                            f"DEBUG: Scaled AI result to extract region size: {ctx_width}x{ctx_height}"
+                        )
+
                     scaled_layers = scaled_img.get_layers()
                     if scaled_layers:
                         ai_layer = scaled_layers[0]
@@ -3070,6 +3708,7 @@ class GimpAIPlugin(Gimp.PlugIn):
         return [
             "gimp-ai-inpaint",
             "gimp-ai-layer-generator",
+            "gimp-ai-layer-composite",
             "gimp-ai-settings",
         ]
 
@@ -3087,6 +3726,14 @@ class GimpAIPlugin(Gimp.PlugIn):
                 self, name, Gimp.PDBProcType.PLUGIN, self.run_layer_generator, None
             )
             procedure.set_menu_label("Image Generator")
+            procedure.add_menu_path("<Image>/Filters/AI/")
+            return procedure
+
+        elif name == "gimp-ai-layer-composite":
+            procedure = Gimp.ImageProcedure.new(
+                self, name, Gimp.PDBProcType.PLUGIN, self.run_layer_composite, None
+            )
+            procedure.set_menu_label("Layer Composite")
             procedure.add_menu_path("<Image>/Filters/AI/")
             return procedure
 
@@ -3119,6 +3766,8 @@ class GimpAIPlugin(Gimp.PlugIn):
         dialog_result = self._show_prompt_dialog(
             "AI Inpaint",
             "Describe the area to inpaint (e.g. 'remove object', 'fix background')",
+            show_mode_selection=True,
+            image=image,
         )
         print(f"DEBUG: Dialog returned: {repr(dialog_result)}")
 
@@ -3126,8 +3775,13 @@ class GimpAIPlugin(Gimp.PlugIn):
             print("DEBUG: User cancelled prompt dialog")
             return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
 
-        # Extract prompt and mode from dialog result
-        prompt, selected_mode = dialog_result
+        # Extract prompt and mode from dialog result (handle both formats)
+        if isinstance(dialog_result, tuple) and len(dialog_result) >= 2:
+            prompt = dialog_result[0]
+            selected_mode = dialog_result[1] if len(dialog_result) > 1 else "contextual"
+        else:
+            prompt = dialog_result
+            selected_mode = "contextual"
         print(f"DEBUG: Extracted prompt: '{prompt}', mode: '{selected_mode}'")
 
         # Initialize progress AFTER dialog (standard GIMP pattern)
@@ -3199,19 +3853,19 @@ class GimpAIPlugin(Gimp.PlugIn):
 
         # Step 7: Call AI API with context and mask
         # Determine the optimal size for OpenAI API
-        if 'target_shape' in context_info:
-            target_w, target_h = context_info['target_shape']
+        if "target_shape" in context_info:
+            target_w, target_h = context_info["target_shape"]
             api_size = f"{target_w}x{target_h}"
-        elif 'target_size' in context_info:
+        elif "target_size" in context_info:
             # Fallback to square for old format
-            size = context_info['target_size']
+            size = context_info["target_size"]
             api_size = f"{size}x{size}"
         else:
             api_size = "1024x1024"  # Default
-        
+
         print(f"DEBUG: Using OpenAI API size: {api_size}")
-        
-        api_success, api_message, api_response = self._call_openai_inpaint(
+
+        api_success, api_message, api_response = self._call_openai_edit(
             image_data, mask_data, prompt, api_key, size=api_size
         )
 
@@ -3238,6 +3892,197 @@ class GimpAIPlugin(Gimp.PlugIn):
         # Always end progress
         Gimp.progress_end()
         return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
+
+    def run_layer_composite(
+        self, procedure, run_mode, image, drawables, config, run_data
+    ):
+        """Layer Composite - combine multiple layers using OpenAI API"""
+        print("DEBUG: Layer Composite called!")
+
+        # Step 1: Show prompt dialog with layer selection
+        print("DEBUG: Showing layer composite dialog...")
+        dialog_result = self._show_composite_dialog(image)
+        print(f"DEBUG: Dialog returned: {repr(dialog_result)}")
+
+        if not dialog_result:
+            print("DEBUG: User cancelled prompt dialog")
+            return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
+
+        # Handle composite dialog result: (prompt, layers, use_mask)
+        if isinstance(dialog_result, tuple) and len(dialog_result) == 3:
+            prompt, selected_layers, use_mask = dialog_result
+            print(
+                f"DEBUG: Layer composite mode: {len(selected_layers)} layers, mask: {use_mask}"
+            )
+        else:
+            print("DEBUG: Composite dialog cancelled or invalid")
+            Gimp.progress_end()
+            return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
+
+        # Step 2: Initialize progress
+        print("DEBUG: Initializing progress after dialog...")
+        Gimp.progress_init("Layer Composite...")
+        Gimp.progress_update(0.1)  # 10% - Started
+
+        # Step 3: Get API key
+        api_key = self._get_api_key()
+        if not api_key:
+            Gimp.message(
+                "❌ No OpenAI API key found!\n\nPlease set your API key in:\n- config.json file\n- OPENAI_API_KEY environment variable"
+            )
+            Gimp.progress_end()
+            return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
+
+        print("DEBUG: Setting progress to 30%...")
+        Gimp.progress_update(0.3)  # 30% - API key validated
+
+        # Step 4: Prepare layers for composite
+        print("DEBUG: Preparing layers for composite...")
+        # Reverse layer order so base layer (last in dialog list) is first for API
+        layers_for_api = list(reversed(selected_layers))
+        success, message, layer_data_list, optimal_shape = (
+            self._prepare_layers_for_composite(layers_for_api)
+        )
+
+        if not success:
+            Gimp.message(f"❌ Layer Preparation Failed: {message}")
+            print(f"DEBUG: Layer preparation failed: {message}")
+            Gimp.progress_end()
+            return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
+
+        print(f"DEBUG: Layer preparation succeeded: {message}")
+        Gimp.progress_update(0.6)  # 60% - Layers prepared
+
+        # Step 5: Prepare mask if requested
+        mask_data = None
+        if use_mask:
+            print("DEBUG: Preparing mask for primary layer...")
+            # Create mask based on selection for the primary layer
+            selection_bounds = Gimp.Selection.bounds(image)
+            if len(selection_bounds) >= 5 and selection_bounds[0]:
+                # Use existing mask creation logic with optimal dimensions
+                target_width, target_height = optimal_shape
+                mask_data = self._create_simple_mask(target_width, target_height)
+                print(
+                    f"DEBUG: Created mask for composite {target_width}x{target_height}"
+                )
+            else:
+                print("DEBUG: No selection found, skipping mask")
+
+        # Step 6: Call OpenAI API with layer array using optimal shape
+        target_width, target_height = optimal_shape
+        api_size = f"{target_width}x{target_height}"
+        print(
+            f"DEBUG: Calling OpenAI API with {len(layer_data_list)} layers, size={api_size}..."
+        )
+        api_success, api_message, api_response = self._call_openai_edit(
+            layer_data_list, mask_data, prompt, api_key, size=api_size
+        )
+
+        if api_success:
+            print(f"DEBUG: AI API succeeded: {api_message}")
+            Gimp.progress_update(0.9)  # 90% - API call completed
+
+            # Step 7: Create result layer in GIMP
+            try:
+                if "data" in api_response and len(api_response["data"]) > 0:
+                    result_data = api_response["data"][0]
+
+                    # Handle both URL and base64 response formats
+                    if "b64_json" in result_data:
+                        # Base64 format (gpt-image-1)
+                        print("DEBUG: Processing base64 composite result...")
+                        import base64
+
+                        print(
+                            f"DEBUG: Decoding base64 data (length: {len(result_data['b64_json'])})"
+                        )
+                        image_bytes = base64.b64decode(result_data["b64_json"])
+                        print(f"DEBUG: Decoded to {len(image_bytes)} bytes")
+
+                        # Use the same proven method as image generator
+                        print(
+                            "DEBUG: Creating layer from decoded data using _add_layer_from_data..."
+                        )
+                        success = self._add_layer_from_data(image, image_bytes)
+                        if success:
+                            # Rename the layer to indicate it's a composite
+                            new_layer = image.get_layers()[0]
+                            new_layer.set_name("Layer Composite")
+
+                            Gimp.progress_update(1.0)  # 100% - Complete
+                            Gimp.message("✅ Layer Composite completed successfully!")
+                            print("DEBUG: Layer composite creation successful")
+                        else:
+                            raise Exception("Failed to create layer from result data")
+
+                    elif "url" in result_data:
+                        # URL format (fallback)
+                        print("DEBUG: Downloading composite result from URL...")
+
+                        import urllib.request
+
+                        with urllib.request.urlopen(result_data["url"]) as response:
+                            image_data = response.read()
+
+                        # Create new layer with result
+                        temp_image = self._create_image_from_data(image_data)
+                        if temp_image:
+                            new_layer = temp_image.get_layers()[0].copy()
+                            new_layer.set_name("Layer Composite")
+                            image.insert_layer(new_layer, None, 0)
+                            temp_image.delete()
+
+                            Gimp.progress_update(1.0)  # 100% - Complete
+                            Gimp.message("✅ Layer Composite completed successfully!")
+                        else:
+                            raise Exception("Failed to create image from result data")
+                    else:
+                        raise Exception(
+                            "No image data (b64_json or url) in API response"
+                        )
+                else:
+                    raise Exception("No data in API response")
+
+            except Exception as e:
+                error_msg = f"Failed to process composite result: {str(e)}"
+                print(f"DEBUG: {error_msg}")
+                Gimp.message(f"❌ {error_msg}")
+        else:
+            Gimp.message(f"❌ AI API Failed: {api_message}")
+            print(f"DEBUG: AI API failed: {api_message}")
+
+        # Always end progress
+        Gimp.progress_end()
+        return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
+
+    def _create_image_from_data(self, image_data):
+        """Helper function to create GIMP image from binary data"""
+        try:
+            import tempfile
+            import os
+
+            print(f"DEBUG: Writing {len(image_data)} bytes to temp file...")
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+                temp_file.write(image_data)
+                temp_path = temp_file.name
+            print(f"DEBUG: Temp file created: {temp_path}")
+
+            # Load image using GIMP
+            print("DEBUG: Creating Gio.File...")
+            file = Gio.File.new_for_path(temp_path)
+            print("DEBUG: Calling Gimp.file_load()...")
+            temp_image = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, file)
+            print("DEBUG: Gimp.file_load() completed")
+
+            print("DEBUG: Cleaning up temp file...")
+            os.unlink(temp_path)
+            print("DEBUG: Image creation successful")
+            return temp_image
+
+        except Exception as e:
+            print(f"DEBUG: Failed to create image from data: {e}")
+            return None
 
     def _generate_gpt_image_layer(self, image, prompt, api_key, size="auto"):
         """Generate a new layer using GPT-Image-1"""
