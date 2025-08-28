@@ -263,6 +263,15 @@ class GimpAIPlugin(Gimp.PlugIn):
         progress_label.set_text("Ready to start...")
         return progress_label, progress_label
 
+    def _is_debug_mode(self):
+        """Check if debug mode is enabled (saves temp files to /tmp)"""
+        # Check config first
+        debug = self.config.get("debug_mode", False)
+        # Allow environment variable override
+        if os.environ.get("GIMP_AI_DEBUG") == "1":
+            debug = True
+        return debug
+
     def _show_prompt_dialog(
         self, title="AI Prompt", default_text="", show_mode_selection=True, image=None
     ):
@@ -626,7 +635,10 @@ class GimpAIPlugin(Gimp.PlugIn):
             dialog.set_default_size(500, 400)
             dialog.set_resizable(True)
 
-            # Add buttons
+            # Add buttons using GIMP's standard approach
+            dialog.add_button(
+                "Settings", Gtk.ResponseType.HELP
+            )  # Use HELP for Settings
             dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
             ok_button = dialog.add_button("Composite Layers", Gtk.ResponseType.OK)
             ok_button.set_can_default(True)
@@ -652,6 +664,43 @@ class GimpAIPlugin(Gimp.PlugIn):
             )
             info_label.set_halign(Gtk.Align.START)
             content_area.pack_start(info_label, False, False, 0)
+
+            # Check API key and show warning if missing
+            api_key = self._get_api_key()
+            api_warning_bar = None
+
+            if not api_key:
+                # Create warning info bar
+                api_warning_bar = Gtk.InfoBar()
+                api_warning_bar.set_message_type(Gtk.MessageType.WARNING)
+                api_warning_bar.set_show_close_button(False)
+
+                # Warning message
+                warning_label = Gtk.Label()
+                warning_label.set_markup("⚠️ OpenAI API key not configured")
+                warning_label.set_halign(Gtk.Align.START)
+
+                # Configure button - connect to main dialog response
+                configure_button = api_warning_bar.add_button(
+                    "Configure Now", Gtk.ResponseType.APPLY
+                )
+
+                # Connect the InfoBar response to the main dialog
+                def on_configure_clicked(infobar, response_id):
+                    if response_id == Gtk.ResponseType.APPLY:
+                        dialog.response(Gtk.ResponseType.APPLY)
+
+                api_warning_bar.connect("response", on_configure_clicked)
+
+                # Add label to info bar content area
+                info_content = api_warning_bar.get_content_area()
+                info_content.pack_start(warning_label, False, False, 0)
+
+                content_area.pack_start(api_warning_bar, False, False, 5)
+
+                # Disable OK button when no API key
+                ok_button.set_sensitive(False)
+                ok_button.set_label("Configure & Continue")
 
             # Layer list (read-only, just for user info)
             layer_frame = Gtk.Frame(label="Layers to composite:")
@@ -785,6 +834,36 @@ class GimpAIPlugin(Gimp.PlugIn):
                     # Return dialog, progress_label, and data for processing
                     return (dialog, progress_label, prompt.strip(), visible_layers, use_mask)
 
+                elif response == Gtk.ResponseType.HELP:
+                    print("DEBUG: Settings button clicked")
+                    # Show settings dialog
+                    self._show_settings_dialog(dialog)
+                    # Check if API key was configured
+                    api_key = self._get_api_key()
+                    if api_key:
+                        print("DEBUG: API key configured, enabled OK button")
+                        ok_button.set_sensitive(True)
+                        ok_button.set_label("Composite Layers")
+                        if api_warning_bar:
+                            api_warning_bar.hide()
+                    else:
+                        print("DEBUG: API key still not configured")
+
+                elif response == Gtk.ResponseType.APPLY:
+                    print("DEBUG: Configure Now button clicked")
+                    # Show settings dialog when "Configure Now" is clicked
+                    self._show_settings_dialog(dialog)
+                    # Check if API key was configured
+                    api_key = self._get_api_key()
+                    if api_key:
+                        print("DEBUG: API key configured, enabled OK button")
+                        ok_button.set_sensitive(True)
+                        ok_button.set_label("Composite Layers")
+                        if api_warning_bar:
+                            api_warning_bar.hide()
+                    else:
+                        print("DEBUG: API key still not configured")
+
                 else:
                     dialog.destroy()
                     return None
@@ -873,6 +952,30 @@ class GimpAIPlugin(Gimp.PlugIn):
             history_frame.add(history_box)
             content_area.pack_start(history_frame, False, False, 0)
 
+            # Debug Settings section
+            debug_frame = Gtk.Frame(label="Debug Settings")
+            debug_box = Gtk.VBox(spacing=10)
+            debug_box.set_margin_start(10)
+            debug_box.set_margin_end(10)
+            debug_box.set_margin_top(10)
+            debug_box.set_margin_bottom(10)
+
+            # Debug mode checkbox
+            debug_checkbox = Gtk.CheckButton()
+            debug_checkbox.set_label("Save debug images to /tmp")
+            debug_checkbox.set_active(self.config.get("debug_mode", False))
+            debug_box.pack_start(debug_checkbox, False, False, 0)
+
+            # Debug explanation
+            debug_info = Gtk.Label()
+            debug_info.set_text("Saves intermediate AI processing images for troubleshooting")
+            debug_info.set_halign(Gtk.Align.START)
+            debug_info.get_style_context().add_class("dim-label")
+            debug_box.pack_start(debug_info, False, False, 0)
+
+            debug_frame.add(debug_box)
+            content_area.pack_start(debug_frame, False, False, 0)
+
             # Show all widgets
             content_area.show_all()
 
@@ -885,8 +988,13 @@ class GimpAIPlugin(Gimp.PlugIn):
                     if "openai" not in self.config:
                         self.config["openai"] = {}
                     self.config["openai"]["api_key"] = new_key
-                    self._save_config()
                     print("DEBUG: API key updated")
+                
+                # Save debug mode setting
+                debug_mode = debug_checkbox.get_active()
+                self.config["debug_mode"] = debug_mode
+                self._save_config()
+                print(f"DEBUG: Debug mode set to {debug_mode}")
 
             dialog.destroy()
 
@@ -3015,12 +3123,13 @@ class GimpAIPlugin(Gimp.PlugIn):
                         layer_bytes = layer_data
 
                     # Create debug file for inspection (same as single mode)
-                    debug_filename = (
-                        f"/tmp/gpt-image-1_array_image_{i}_{len(layer_bytes)}_bytes.png"
-                    )
-                    with open(debug_filename, "wb") as debug_file:
-                        debug_file.write(layer_bytes)
-                    print(f"DEBUG: Saved array image {i} to {debug_filename}")
+                    if self._is_debug_mode():
+                        debug_filename = (
+                            f"/tmp/gpt-image-1_array_image_{i}_{len(layer_bytes)}_bytes.png"
+                        )
+                        with open(debug_filename, "wb") as debug_file:
+                            debug_file.write(layer_bytes)
+                        print(f"DEBUG: Saved array image {i} to {debug_filename}")
 
                     # Validate PNG format (same as single mode)
                     if layer_bytes.startswith(b"\x89PNG"):
@@ -3055,12 +3164,13 @@ class GimpAIPlugin(Gimp.PlugIn):
                 # Add mask if provided (applies to first image) - with same validation
                 if mask_data:
                     # Create debug file for mask
-                    debug_mask_filename = (
-                        f"/tmp/gpt-image-1_array_mask_{len(mask_data)}_bytes.png"
-                    )
-                    with open(debug_mask_filename, "wb") as debug_file:
-                        debug_file.write(mask_data)
-                    print(f"DEBUG: Saved array mask to {debug_mask_filename}")
+                    if self._is_debug_mode():
+                        debug_mask_filename = (
+                            f"/tmp/gpt-image-1_array_mask_{len(mask_data)}_bytes.png"
+                        )
+                        with open(debug_mask_filename, "wb") as debug_file:
+                            debug_file.write(mask_data)
+                        print(f"DEBUG: Saved array mask to {debug_mask_filename}")
 
                     # Validate mask format (same as single mode)
                     if mask_data.startswith(b"\x89PNG"):
@@ -3126,19 +3236,20 @@ class GimpAIPlugin(Gimp.PlugIn):
                 image_bytes = base64.b64decode(image_data)
 
                 # Save debug copies of what we're sending to GPT-Image-1
-                debug_input_filename = (
-                    f"/tmp/gpt-image-1_input_{len(image_bytes)}_bytes.png"
-                )
-                with open(debug_input_filename, "wb") as debug_file:
-                    debug_file.write(image_bytes)
-                print(f"DEBUG: Saved input image to {debug_input_filename}")
+                if self._is_debug_mode():
+                    debug_input_filename = (
+                        f"/tmp/gpt-image-1_input_{len(image_bytes)}_bytes.png"
+                    )
+                    with open(debug_input_filename, "wb") as debug_file:
+                        debug_file.write(image_bytes)
+                    print(f"DEBUG: Saved input image to {debug_input_filename}")
 
-                debug_mask_filename = (
-                    f"/tmp/gpt-image-1_mask_{len(mask_data)}_bytes.png"
-                )
-                with open(debug_mask_filename, "wb") as debug_file:
-                    debug_file.write(mask_data)
-                print(f"DEBUG: Saved mask to {debug_mask_filename}")
+                    debug_mask_filename = (
+                        f"/tmp/gpt-image-1_mask_{len(mask_data)}_bytes.png"
+                    )
+                    with open(debug_mask_filename, "wb") as debug_file:
+                        debug_file.write(mask_data)
+                    print(f"DEBUG: Saved mask to {debug_mask_filename}")
 
                 # Analyze both image formats by examining PNG headers
                 if image_bytes.startswith(b"\x89PNG"):
@@ -3379,10 +3490,11 @@ class GimpAIPlugin(Gimp.PlugIn):
                 temp_file.write(image_data)
 
             # Save debug copy
-            debug_filename = f"/tmp/gpt-image-1_result_{len(image_data)}_bytes.png"
-            with open(debug_filename, "wb") as debug_file:
-                debug_file.write(image_data)
-            print(f"DEBUG: Saved GPT-Image-1 result to {debug_filename} for inspection")
+            if self._is_debug_mode():
+                debug_filename = f"/tmp/gpt-image-1_result_{len(image_data)}_bytes.png"
+                with open(debug_filename, "wb") as debug_file:
+                    debug_file.write(image_data)
+                print(f"DEBUG: Saved GPT-Image-1 result to {debug_filename} for inspection")
 
             try:
                 # Load the AI result into a temporary image
@@ -3692,10 +3804,11 @@ class GimpAIPlugin(Gimp.PlugIn):
                 temp_file.write(image_data)
 
             # Also save a copy for debugging
-            debug_filename = f"/tmp/gpt-image-1_result_{len(image_data)}_bytes.png"
-            with open(debug_filename, "wb") as debug_file:
-                debug_file.write(image_data)
-            print(f"DEBUG: Saved GPT-Image-1 result to {debug_filename} for inspection")
+            if self._is_debug_mode():
+                debug_filename = f"/tmp/gpt-image-1_result_{len(image_data)}_bytes.png"
+                with open(debug_filename, "wb") as debug_file:
+                    debug_file.write(image_data)
+                print(f"DEBUG: Saved GPT-Image-1 result to {debug_filename} for inspection")
 
             try:
                 # Load the image into GIMP
