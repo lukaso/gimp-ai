@@ -44,6 +44,7 @@ class GimpAIPlugin(Gimp.PlugIn):
     def __init__(self):
         super().__init__()
         self.config = self._load_config()
+        self._cancel_requested = False
 
     def _load_config(self):
         """Load configuration from various locations"""
@@ -272,6 +273,13 @@ class GimpAIPlugin(Gimp.PlugIn):
             debug = True
         return debug
 
+    def _check_cancel_and_process_events(self):
+        """Check if cancel was requested and process GTK events"""
+        # Process pending GTK events to keep dialog responsive
+        while Gtk.events_pending():
+            Gtk.main_iteration()
+        return self._cancel_requested
+
     def _show_prompt_dialog(
         self, title="AI Prompt", default_text="", show_mode_selection=True, image=None
     ):
@@ -280,7 +288,10 @@ class GimpAIPlugin(Gimp.PlugIn):
         if not default_text:
             default_text = self._get_last_prompt()
         if not default_text:
-            default_text = "Describe what you want to generate..."
+            if title == "AI Inpaint":
+                default_text = "Describe the area to inpaint (e.g. 'remove object', 'fix background')"
+            else:
+                default_text = "Describe what you want to generate..."
         try:
             # Initialize GIMP UI system (only if not already initialized)
             if not hasattr(self, "_ui_initialized"):
@@ -510,10 +521,9 @@ class GimpAIPlugin(Gimp.PlugIn):
                     placeholder_texts = [
                         "Describe what you want to generate...",
                         "Describe the area to inpaint (e.g. 'remove object', 'fix background')",
-                        default_text,  # In case default_text is a placeholder
                     ]
 
-                    is_placeholder = prompt in placeholder_texts or not prompt
+                    is_placeholder = prompt in placeholder_texts or not prompt.strip()
 
                     if is_placeholder:
                         # Show error message and keep dialog open
@@ -558,6 +568,19 @@ class GimpAIPlugin(Gimp.PlugIn):
                         # Save the selected mode to config
                         self.config["last_mode"] = selected_mode
                         self._save_config()
+
+                    # Reset cancel flag for new operation
+                    self._cancel_requested = False
+                    
+                    # Add cancel handler to keep dialog responsive during processing
+                    def on_dialog_response(dialog, response_id):
+                        if response_id == Gtk.ResponseType.CANCEL:
+                            print("DEBUG: Cancel button clicked during processing")
+                            self._cancel_requested = True
+                            return True  # Keep dialog open
+                        return False
+                    
+                    dialog.connect("response", on_dialog_response)
 
                     # Return dialog, progress_label, and prompt data for processing
                     return (dialog, progress_label, prompt, selected_mode) if prompt else None
@@ -754,8 +777,10 @@ class GimpAIPlugin(Gimp.PlugIn):
             text_view.set_wrap_mode(Gtk.WrapMode.WORD)
             text_view.set_border_width(8)
 
-            # Set default prompt
-            default_prompt = "Combine these layers naturally into a cohesive image"
+            # Set default prompt - use last prompt if available
+            default_prompt = self._get_last_prompt()
+            if not default_prompt:
+                default_prompt = "Combine these layers naturally into a cohesive image"
             text_buffer = text_view.get_buffer()
             text_buffer.set_text(default_prompt)
 
@@ -803,7 +828,15 @@ class GimpAIPlugin(Gimp.PlugIn):
                     end_iter = text_buffer.get_end_iter()
                     prompt = text_buffer.get_text(start_iter, end_iter, False)
 
-                    if not prompt or not prompt.strip():
+                    # Check if user entered actual content (not just placeholder)
+                    placeholder_texts = [
+                        "Combine these layers naturally into a cohesive image",
+                        "Describe what you want to generate...",
+                    ]
+
+                    is_placeholder = prompt in placeholder_texts or not prompt.strip()
+
+                    if is_placeholder:
                         # Show error
                         error_dialog = Gtk.MessageDialog(
                             parent=dialog,
@@ -830,6 +863,19 @@ class GimpAIPlugin(Gimp.PlugIn):
 
                     # Save prompt to history
                     self._add_to_prompt_history(prompt.strip())
+
+                    # Reset cancel flag for new operation
+                    self._cancel_requested = False
+                    
+                    # Add cancel handler to keep dialog responsive during processing
+                    def on_dialog_response(dialog, response_id):
+                        if response_id == Gtk.ResponseType.CANCEL:
+                            print("DEBUG: Cancel button clicked during processing")
+                            self._cancel_requested = True
+                            return True  # Keep dialog open
+                        return False
+                    
+                    dialog.connect("response", on_dialog_response)
 
                     # Return dialog, progress_label, and data for processing
                     return (dialog, progress_label, prompt.strip(), visible_layers, use_mask)
@@ -3400,6 +3446,16 @@ class GimpAIPlugin(Gimp.PlugIn):
             current_time = time.time()
             elapsed = current_time - start_time
             
+            # Check for cancellation
+            if self._check_cancel_and_process_events():
+                print("DEBUG: API operation cancelled by user")
+                if progress_label:
+                    self._update_progress(progress_label, "❌ Operation cancelled")
+                result['success'] = False
+                result['message'] = "Operation cancelled by user"
+                result['response'] = None
+                break
+            
             # Check for timeout
             if elapsed > max_wait_time:
                 print(f"DEBUG: Thread timeout after {max_wait_time} seconds")
@@ -4008,7 +4064,7 @@ class GimpAIPlugin(Gimp.PlugIn):
         print("DEBUG: About to show prompt dialog...")
         dialog_result = self._show_prompt_dialog(
             "AI Inpaint",
-            "Describe the area to inpaint (e.g. 'remove object', 'fix background')",
+            "",
             show_mode_selection=True,
             image=image,
         )
@@ -4423,16 +4479,19 @@ class GimpAIPlugin(Gimp.PlugIn):
         start_time = time.time()
         
         while not result['completed']:
+            # Check for cancellation
+            if self._check_cancel_and_process_events():
+                print("DEBUG: Image generation cancelled by user")
+                result['success'] = False
+                break
+            
             # Check for timeout  
             if time.time() - start_time > max_wait_time:
                 print(f"DEBUG: Image generation thread timeout after {max_wait_time} seconds")
                 result['success'] = False
                 break
-                
-            # Process GTK events to keep UI responsive
-            while Gtk.events_pending():
-                Gtk.main_iteration()
-            # Small sleep to prevent CPU spinning
+            
+            # Small sleep to prevent CPU spinning  
             time.sleep(0.01)
         
         # Thread completed, return results
@@ -4540,7 +4599,7 @@ class GimpAIPlugin(Gimp.PlugIn):
 
         # Show prompt dialog with API key checking (no mode selection for image generator)
         dialog_result = self._show_prompt_dialog(
-            "Image Generator", self._get_last_prompt(), show_mode_selection=False
+            "Image Generator", "", show_mode_selection=False
         )
         if not dialog_result:
             return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
