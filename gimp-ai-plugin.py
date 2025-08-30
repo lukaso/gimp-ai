@@ -1284,82 +1284,6 @@ class GimpAIPlugin(Gimp.PlugIn):
             print(f"DEBUG: Context extraction failed: {e}")
             return False, f"Context extraction error: {str(e)}", None
 
-    def _create_simple_mask(self, width=512, height=512):
-        """Create a test mask with transparent center area for inpainting using GIMP (PNG)"""
-        try:
-            print(f"DEBUG: Creating test inpainting mask {width}x{height}")
-
-            # Create a mask with opaque white background and transparent center circle for inpainting
-            # According to OpenAI docs: transparent areas = inpaint, opaque = preserve
-
-            # Create IHDR chunk data (RGBA format for transparency)
-            ihdr_data = (
-                width.to_bytes(4, "big")  # Width
-                + height.to_bytes(4, "big")  # Height
-                + b"\x08\x06\x00\x00\x00"  # 8-bit RGBA, no compression/filter/interlace
-            )
-
-            # Calculate IHDR CRC
-            import zlib
-
-            ihdr_crc = zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF
-
-            # Create image data with transparent center area for inpainting
-            image_rows = []
-            center_x, center_y = width // 2, height // 2
-            radius = min(width, height) // 4  # Circle radius
-
-            for y in range(height):
-                row = b"\x00"  # Filter byte
-                for x in range(width):
-                    # Calculate distance from center
-                    distance = ((x - center_x) ** 2 + (y - center_y) ** 2) ** 0.5
-
-                    if distance <= radius:
-                        # Transparent (inpaint this area) - RGBA: (0, 0, 0, 0)
-                        row += b"\x00\x00\x00\x00"
-                    else:
-                        # White opaque (preserve this area) - RGBA: (255, 255, 255, 255)
-                        row += b"\xff\xff\xff\xff"
-
-                image_rows.append(row)
-
-            image_data = b"".join(image_rows)
-            compressed_data = zlib.compress(image_data)
-
-            # Calculate IDAT CRC
-            idat_crc = zlib.crc32(b"IDAT" + compressed_data) & 0xFFFFFFFF
-
-            # Build complete PNG
-            png_data = (
-                b"\x89PNG\r\n\x1a\n"  # PNG signature
-                + len(ihdr_data).to_bytes(4, "big")
-                + b"IHDR"  # IHDR chunk length + type
-                + ihdr_data
-                + ihdr_crc.to_bytes(4, "big")  # IHDR data + CRC
-                + len(compressed_data).to_bytes(4, "big")
-                + b"IDAT"  # IDAT chunk length + type
-                + compressed_data
-                + idat_crc.to_bytes(4, "big")  # IDAT data + CRC
-                + b"\x00\x00\x00\x00IEND\xae B`\x82"  # IEND chunk
-            )
-
-            print(
-                f"DEBUG: Created inpainting mask PNG: {len(png_data)} bytes (transparent center circle, white background)"
-            )
-            return png_data
-
-        except Exception as e:
-            print(f"DEBUG: Failed to create simple mask: {e}")
-            # Fallback to very basic 1x1 white PNG
-            fallback_png = (
-                b"\x89PNG\r\n\x1a\n"  # PNG signature
-                b"\x00\x00\x00\rIHDR"  # IHDR chunk
-                b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x00\x00\x00\x00:~\x9b\x55"  # 1x1 grayscale
-                b"\x00\x00\x00\nIDAT\x08\x1dc\xf8\x00\x00\x00\x01\x00\x01\x02\x1a\x05\x1c"  # white pixel
-                b"\x00\x00\x00\x00IEND\xae B`\x82"  # IEND
-            )
-            return fallback_png
 
     def _calculate_full_image_context_extraction(self, image):
         """Calculate context extraction for full image (GPT-Image-1 mode)"""
@@ -1669,6 +1593,83 @@ class GimpAIPlugin(Gimp.PlugIn):
             print(f"DEBUG: Full image extraction failed: {e}")
             return False, f"Full image extraction failed: {str(e)}", None
 
+    def _run_threaded_operation(self, operation_func, operation_name, progress_label=None, max_wait_time=300):
+        """Generic threaded wrapper for any operation to keep UI responsive"""
+        import threading
+        import time
+
+        print(f"DEBUG: Starting threaded {operation_name}...")
+
+        # Shared storage for results
+        result = {
+            "success": False,
+            "message": "",
+            "data": None,  # Generic data field
+            "completed": False,
+        }
+
+        def operation_thread():
+            try:
+                result.update(operation_func())
+            except Exception as e:
+                print(f"DEBUG: [THREAD] {operation_name} exception: {e}")
+                result["success"] = False
+                result["message"] = str(e)
+                result["data"] = None
+            finally:
+                result["completed"] = True
+
+        # Start thread
+        thread = threading.Thread(target=operation_thread)
+        thread.daemon = True
+        thread.start()
+
+        # Keep UI responsive while waiting
+        start_time = time.time()
+        last_update_time = start_time
+
+        print(f"DEBUG: Starting wait loop for {operation_name}, progress_label={progress_label is not None}")
+        while not result["completed"]:
+            current_time = time.time()
+            elapsed = current_time - start_time
+
+            # Update progress every 5 seconds
+            if progress_label and current_time - last_update_time > 5:
+                print(f"DEBUG: About to call _update_progress at {elapsed:.1f}s")
+                minutes = int(elapsed // 60)
+                if minutes > 0:
+                    self._update_progress(
+                        progress_label, f"Still processing... ({minutes}m elapsed)"
+                    )
+                else:
+                    self._update_progress(
+                        progress_label, f"Processing... ({int(elapsed)}s elapsed)"
+                    )
+                last_update_time = current_time
+                print(f"DEBUG: _update_progress call completed")
+
+            # Check for cancellation
+            if self._check_cancel_and_process_events():
+                print(f"DEBUG: {operation_name} cancelled by user")
+                if progress_label:
+                    self._update_progress(progress_label, "❌ Operation cancelled")
+                result["success"] = False
+                result["message"] = "Operation cancelled by user"
+                break
+
+            # Check for timeout
+            if elapsed > max_wait_time:
+                print(f"DEBUG: {operation_name} timeout after {max_wait_time} seconds")
+                if progress_label:
+                    self._update_progress(progress_label, "❌ Request timed out")
+                result["success"] = False
+                result["message"] = "Request timed out - check internet connection"
+                break
+
+            time.sleep(0.1)  # Small sleep to prevent busy waiting
+
+        return result["success"], result["message"], result["data"]
+
     def _call_openai_generation(
         self, prompt, api_key, size="auto", progress_label=None
     ):
@@ -1747,92 +1748,15 @@ class GimpAIPlugin(Gimp.PlugIn):
         self, prompt, api_key, size="auto", progress_label=None
     ):
         """Threaded wrapper for OpenAI image generation API call to keep UI responsive"""
-        import threading
-        import time
+        def operation():
+            success, message, image_data = self._call_openai_generation(
+                prompt, api_key, size, progress_label
+            )
+            return {"success": success, "message": message, "data": image_data}
 
-        print("DEBUG: Starting threaded OpenAI generation API call...")
-
-        # Shared storage for results
-        result = {
-            "success": False,
-            "message": "",
-            "image_data": None,
-            "completed": False,
-        }
-
-        def network_thread():
-            try:
-                # Call the new blocking function with progress label (same pattern as _call_openai_edit_threaded)
-                success, message, image_data = self._call_openai_generation(
-                    prompt, api_key, size, progress_label
-                )
-                result["success"] = success
-                result["message"] = message
-                result["image_data"] = image_data
-            except Exception as e:
-                print(f"DEBUG: [THREAD] Generation exception: {e}")
-                result["success"] = False
-                result["message"] = str(e)
-                result["image_data"] = None
-            finally:
-                result["completed"] = True
-
-        # Start thread
-        thread = threading.Thread(target=network_thread)
-        thread.daemon = True
-        thread.start()
-
-        # Keep UI responsive while waiting - same pattern as _call_openai_edit_threaded
-        max_wait_time = 300  # 5 minutes maximum wait
-        start_time = time.time()
-        last_update_time = start_time
-
-        print(f"DEBUG: Starting wait loop, progress_label={progress_label is not None}")
-        while not result["completed"]:
-            current_time = time.time()
-            elapsed = current_time - start_time
-
-            # Update progress every 5 seconds for testing (reduced from 30)
-            if progress_label and current_time - last_update_time > 5:
-                print(f"DEBUG: About to call _update_progress at {elapsed:.1f}s")
-                minutes = int(elapsed // 60)
-                if minutes > 0:
-                    self._update_progress(
-                        progress_label, f"Still processing... ({minutes}m elapsed)"
-                    )
-                else:
-                    self._update_progress(
-                        progress_label, f"Processing... ({int(elapsed)}s elapsed)"
-                    )
-                last_update_time = current_time
-                print(f"DEBUG: _update_progress call completed")
-
-            # Check for cancellation - use same method as working function
-            if self._check_cancel_and_process_events():
-                print("DEBUG: Generation operation cancelled by user")
-                if progress_label:
-                    self._update_progress(progress_label, "❌ Operation cancelled")
-                result["success"] = False
-                result["message"] = "Operation cancelled by user"
-                break
-
-            # Check for timeout
-            if elapsed > max_wait_time:
-                print(f"DEBUG: Generation thread timeout after {max_wait_time} seconds")
-                if progress_label:
-                    self._update_progress(progress_label, "❌ Request timed out")
-                result["success"] = False
-                result["message"] = "Request timed out - check internet connection"
-                break
-
-            # Small delay to prevent busy waiting (reduced for better responsiveness)
-            time.sleep(0.05)
-
-        print(
-            f"DEBUG: [MAIN] Wait loop ended, final result: success={result['success']}, message='{result['message']}')"
+        return self._run_threaded_operation(
+            operation, "OpenAI generation API call", progress_label
         )
-
-        return result["success"], result["message"], result["image_data"]
 
     def _prepare_layers_for_composite(self, selected_layers):
         """Prepare multiple layers for OpenAI composite API - each layer as separate PNG"""
@@ -3138,88 +3062,15 @@ class GimpAIPlugin(Gimp.PlugIn):
         progress_label=None,
     ):
         """Threaded wrapper for OpenAI API call to keep UI responsive"""
-        import threading
-        import time
+        def operation():
+            success, message, response = self._call_openai_edit(
+                image_data, mask_data, prompt, api_key, size, progress_label
+            )
+            return {"success": success, "message": message, "data": response}
 
-        print("DEBUG: Starting threaded OpenAI API call...")
-
-        # Shared storage for results and progress label for timeout updates
-        result = {"success": False, "message": "", "response": None, "completed": False}
-
-        def network_thread():
-            try:
-                # Call the existing blocking function with progress label
-                success, message, response = self._call_openai_edit(
-                    image_data, mask_data, prompt, api_key, size, progress_label
-                )
-                result["success"] = success
-                result["message"] = message
-                result["response"] = response
-            except Exception as e:
-                print(f"DEBUG: Network thread exception: {e}")
-                result["success"] = False
-                result["message"] = str(e)
-                result["response"] = None
-            finally:
-                result["completed"] = True
-
-        # Start thread
-        thread = threading.Thread(target=network_thread)
-        thread.daemon = True
-        thread.start()
-
-        # Keep UI responsive while waiting
-        max_wait_time = 300  # 5 minutes maximum wait
-        start_time = time.time()
-        last_update_time = start_time
-
-        while not result["completed"]:
-            current_time = time.time()
-            elapsed = current_time - start_time
-
-            # Check for cancellation
-            if self._check_cancel_and_process_events():
-                print("DEBUG: API operation cancelled by user")
-                if progress_label:
-                    self._update_progress(progress_label, "❌ Operation cancelled")
-                result["success"] = False
-                result["message"] = "Operation cancelled by user"
-                result["response"] = None
-                break
-
-            # Check for timeout
-            if elapsed > max_wait_time:
-                print(f"DEBUG: Thread timeout after {max_wait_time} seconds")
-                if progress_label:
-                    self._update_progress(
-                        progress_label,
-                        "❌ Request timed out - check internet connection",
-                    )
-                result["success"] = False
-                result["message"] = (
-                    "Request timed out - please check your internet connection"
-                )
-                result["response"] = None
-                break
-
-            # Update progress message every 30 seconds for slow connections
-            if current_time - last_update_time > 30:
-                minutes_elapsed = int(elapsed // 60)
-                if minutes_elapsed > 0:
-                    slow_message = f"Still processing... ({minutes_elapsed}m elapsed)"
-                    if progress_label:
-                        self._update_progress(progress_label, slow_message)
-                last_update_time = current_time
-
-            # Process GTK events to keep UI responsive
-            while Gtk.events_pending():
-                Gtk.main_iteration()
-            # Small sleep to prevent CPU spinning
-            time.sleep(0.01)
-
-        # Thread completed, return results
-        print(f"DEBUG: Threaded API call completed: success={result['success']}")
-        return result["success"], result["message"], result["response"]
+        return self._run_threaded_operation(
+            operation, "OpenAI edit API call", progress_label
+        )
 
     def _download_and_composite_result(
         self, image, api_response, context_info, mode, color_info=None
