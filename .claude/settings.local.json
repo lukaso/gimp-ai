@@ -27,7 +27,8 @@
       "WebFetch(domain:schoenitzer.de)",
       "Bash(python:*)",
       "WebFetch(domain:docs.aimlapi.com)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(/Applications/GIMP.app/Contents/MacOS/gimp:*)"
     ],
     "deny": [
       "Read(file_path:*/config.json)"
