@@ -30,8 +30,7 @@
       "WebFetch(domain:github.com)",
       "Bash(/Applications/GIMP.app/Contents/MacOS/gimp:*)"
     ],
-    "deny": [
-      "Read(file_path:*/config.json)"
-    ]
+    "deny": [],
+    "ask": []
   }
 }

@@ -301,8 +301,18 @@ class GimpAIPlugin(Gimp.PlugIn):
         return debug
 
     def _check_cancel_and_process_events(self):
-        """Check if cancel was requested"""
-        # Removed GTK event processing to prevent segmentation faults
+        """Check if cancel was requested and process minimal UI events"""
+        # Process GTK events more aggressively for better UI responsiveness
+        try:
+            # Process multiple pending events to improve responsiveness
+            if hasattr(Gtk, 'events_pending'):
+                event_count = 0
+                while Gtk.events_pending() and event_count < 5:  # Process up to 5 events
+                    Gtk.main_iteration_do(False)  # Non-blocking iteration
+                    event_count += 1
+        except Exception as e:
+            print(f"DEBUG: GTK event processing warning (non-fatal): {e}")
+        
         return self._cancel_requested
 
     def _show_prompt_dialog(
@@ -1938,6 +1948,75 @@ class GimpAIPlugin(Gimp.PlugIn):
             print(f"DEBUG: Full image extraction failed: {e}")
             return False, f"Full image extraction failed: {str(e)}", None
 
+    def _call_openai_generation(self, prompt, api_key, size="auto", progress_label=None):
+        """Call OpenAI GPT-Image-1 API for image generation with progress updates"""
+        try:
+            import json
+            import urllib.request
+            
+            print(f"DEBUG: Calling GPT-Image-1 generation API with prompt: {prompt}")
+            
+            # Determine optimal size
+            if size == "auto":
+                optimal_size = "1536x1024"  # Default landscape
+            else:
+                optimal_size = size
+
+            print(f"DEBUG: Using size {optimal_size} for generation")
+
+            # Prepare the request data
+            data = {
+                "model": "gpt-image-1", 
+                "prompt": prompt,
+                "n": 1,
+                "size": optimal_size,
+                "quality": "high",
+            }
+
+            # Create the request
+            json_data = json.dumps(data).encode("utf-8")
+            url = "https://api.openai.com/v1/images/generations"
+            req = urllib.request.Request(url, data=json_data)
+            req.add_header("Content-Type", "application/json")
+            req.add_header("Authorization", f"Bearer {api_key}")
+
+            print("DEBUG: Sending real GPT-Image-1 generation request...")
+            
+            # Progress during network operation (same pattern as _call_openai_edit)
+            if progress_label:
+                self._update_progress(progress_label, "🚀 Sending request to GPT-Image-1...")
+
+            # Make the API call with progress updates during the call
+            with self._make_url_request(req, timeout=180) as response:
+                response_data = json.loads(response.read().decode("utf-8"))
+
+            print("DEBUG: GPT-Image-1 generation response received")
+            
+            if progress_label:
+                self._update_progress(progress_label, "✅ Processing AI response...")
+
+            # Process the response
+            if "data" in response_data and len(response_data["data"]) > 0:
+                result_data = response_data["data"][0]
+                
+                if "b64_json" in result_data:
+                    print("DEBUG: Processing base64 image data from GPT-Image-1")
+                    import base64
+                    image_data = base64.b64decode(result_data["b64_json"])
+                    print(f"DEBUG: Decoded {len(image_data)} bytes of image data")
+                    
+                    return True, "Image generation successful", image_data
+                else:
+                    print("ERROR: No b64_json in GPT-Image-1 response")
+                    return False, "No image data in response", None
+            else:
+                print("ERROR: No data in GPT-Image-1 response")
+                return False, "No data in API response", None
+                
+        except Exception as e:
+            print(f"ERROR: GPT-Image-1 generation API call failed: {str(e)}")
+            return False, str(e), None
+
     def _call_openai_generation_threaded(self, prompt, api_key, size="auto", progress_label=None):
         """Threaded wrapper for OpenAI image generation API call to keep UI responsive"""
         import threading
@@ -1950,65 +2029,18 @@ class GimpAIPlugin(Gimp.PlugIn):
         
         def network_thread():
             try:
-                import json
-                import urllib.request
-                
-                # Determine optimal size
-                if size == "auto":
-                    optimal_size = "1536x1024"  # Default landscape
-                else:
-                    optimal_size = size
-
-                print(f"DEBUG: [THREAD] Using size {optimal_size} for generation")
-
-                # Prepare the request data
-                data = {
-                    "model": "gpt-image-1", 
-                    "prompt": prompt,
-                    "n": 1,
-                    "size": optimal_size,
-                    "quality": "high",
-                }
-
-                # Create the request
-                json_data = json.dumps(data).encode("utf-8")
-                url = "https://api.openai.com/v1/images/generations"
-                req = urllib.request.Request(url, data=json_data)
-                req.add_header("Content-Type", "application/json")
-                req.add_header("Authorization", f"Bearer {api_key}")
-
-                print("DEBUG: [THREAD] Sending GPT-Image-1 generation request...")
-                
-                # Make the API call
-                with self._make_url_request(req, timeout=180) as response:
-                    response_data = json.loads(response.read().decode("utf-8"))
-
-                print("DEBUG: [THREAD] GPT-Image-1 generation response received")
-
-                # Process the response
-                if "data" in response_data and len(response_data["data"]) > 0:
-                    result_data = response_data["data"][0]
-                    
-                    if "b64_json" in result_data:
-                        print("DEBUG: [THREAD] Processing base64 image data")
-                        import base64
-                        image_data = base64.b64decode(result_data["b64_json"])
-                        print(f"DEBUG: [THREAD] Decoded {len(image_data)} bytes")
-                        
-                        result['success'] = True
-                        result['message'] = "Image generation successful"
-                        result['image_data'] = image_data
-                    else:
-                        result['success'] = False
-                        result['message'] = "No image data in response"
-                else:
-                    result['success'] = False
-                    result['message'] = "No data in API response"
-                    
+                # Call the new blocking function with progress label (same pattern as _call_openai_edit_threaded)
+                success, message, image_data = self._call_openai_generation(
+                    prompt, api_key, size, progress_label
+                )
+                result['success'] = success
+                result['message'] = message
+                result['image_data'] = image_data
             except Exception as e:
                 print(f"DEBUG: [THREAD] Generation exception: {e}")
                 result['success'] = False
                 result['message'] = str(e)
+                result['image_data'] = None
             finally:
                 result['completed'] = True
         
@@ -2022,16 +2054,21 @@ class GimpAIPlugin(Gimp.PlugIn):
         start_time = time.time()
         last_update_time = start_time
         
+        print(f"DEBUG: Starting wait loop, progress_label={progress_label is not None}")
         while not result['completed']:
             current_time = time.time()
             elapsed = current_time - start_time
             
-            # Update progress every 30 seconds like the working function
-            if progress_label and current_time - last_update_time > 30:
+            # Update progress every 5 seconds for testing (reduced from 30)
+            if progress_label and current_time - last_update_time > 5:
+                print(f"DEBUG: About to call _update_progress at {elapsed:.1f}s")
                 minutes = int(elapsed // 60)
                 if minutes > 0:
                     self._update_progress(progress_label, f"Still processing... ({minutes}m elapsed)")
+                else:
+                    self._update_progress(progress_label, f"Processing... ({elapsed:.1f}s elapsed)")
                 last_update_time = current_time
+                print(f"DEBUG: _update_progress call completed")
             
             # Check for cancellation - use same method as working function
             if self._check_cancel_and_process_events():
@@ -2051,8 +2088,10 @@ class GimpAIPlugin(Gimp.PlugIn):
                 result['message'] = "Request timed out - check internet connection"
                 break
             
-            # Small delay to prevent busy waiting
-            time.sleep(0.1)
+            # Small delay to prevent busy waiting (reduced for better responsiveness)
+            time.sleep(0.05)
+        
+        print(f"DEBUG: [MAIN] Wait loop ended, final result: success={result['success']}, message='{result['message']}')")
         
         return result['success'], result['message'], result['image_data']
 
@@ -5118,8 +5157,13 @@ class GimpAIPlugin(Gimp.PlugIn):
                 layer_success = self._add_layer_from_data(image, image_data)
                 result = layer_success
             else:
-                self._update_progress(progress_label, f"❌ Generation failed: {message}")
-                Gimp.message(f"❌ Generation failed: {message}")
+                # Check if this was a cancellation vs actual failure
+                if "cancelled" in message.lower():
+                    self._update_progress(progress_label, "❌ Operation cancelled")
+                    Gimp.message("❌ Operation cancelled by user")
+                else:
+                    self._update_progress(progress_label, f"❌ Generation failed: {message}")
+                    Gimp.message(f"❌ Generation failed: {message}")
                 result = False
             if result:
                 self._update_progress(progress_label, "✅ GPT-Image-1 layer generated successfully!")
@@ -5128,11 +5172,18 @@ class GimpAIPlugin(Gimp.PlugIn):
                     Gimp.PDBStatusType.SUCCESS, GLib.Error()
                 )
             else:
-                self._update_progress(progress_label, "❌ Failed to generate GPT-Image-1 layer")
-                Gimp.message("❌ Failed to generate GPT-Image-1 layer")
-                return procedure.new_return_values(
-                    Gimp.PDBStatusType.EXECUTION_ERROR, GLib.Error()
-                )
+                # Check if this was a cancellation vs actual failure
+                if "cancelled" in message.lower():
+                    # For cancellation, return SUCCESS status (user action, not an error)
+                    return procedure.new_return_values(
+                        Gimp.PDBStatusType.SUCCESS, GLib.Error()
+                    )
+                else:
+                    self._update_progress(progress_label, "❌ Failed to generate GPT-Image-1 layer")
+                    Gimp.message("❌ Failed to generate GPT-Image-1 layer")
+                    return procedure.new_return_values(
+                        Gimp.PDBStatusType.EXECUTION_ERROR, GLib.Error()
+                    )
         except Exception as e:
             error_msg = f"Error generating GPT-Image-1 layer: {str(e)}"
             self._update_progress(progress_label, f"❌ Error: {str(e)}")
