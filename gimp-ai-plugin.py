@@ -235,8 +235,8 @@ class GimpAIPlugin(Gimp.PlugIn):
         # Fallback to last used mode from config
         return self.config.get("last_mode", "contextual")
 
-    def _update_progress(self, progress_label, message):
-        """Update progress message in dialog with proper emoji encoding"""
+    def _update_progress(self, progress_label, message, gimp_progress=None):
+        """Update progress message in dialog with proper emoji encoding, optionally update GIMP progress bar"""
         if progress_label:
             try:
                 # Ensure the message is properly encoded for GTK
@@ -279,13 +279,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                     progress_label.set_text(fallback)
                 except:
                     pass
-        return False  # Return False for GLib.idle_add compatibility
-
-    def _update_dual_progress(self, progress_label, message, gimp_progress=None):
-        """Update both dialog progress label and GIMP progress bar consistently"""
-        # Update dialog progress
-        self._update_progress(progress_label, message)
-
+        
         # Update GIMP progress bar if fraction provided
         if gimp_progress is not None:
             try:
@@ -294,6 +288,17 @@ class GimpAIPlugin(Gimp.PlugIn):
                 Gimp.displays_flush()
             except:
                 pass  # Ignore if not in right context
+                
+        return False  # Return False for GLib.idle_add compatibility
+
+    def _create_progress_callback(self, progress_label):
+        """Create a reusable progress callback for threading"""
+        def progress_callback(message):
+            def update_ui():
+                self._update_progress(progress_label, message)
+                return False
+            GLib.idle_add(update_ui)
+        return progress_callback
 
     def _create_progress_widget(self):
         """Create progress label widget for dialogs"""
@@ -859,10 +864,11 @@ class GimpAIPlugin(Gimp.PlugIn):
 
                 history_combo.connect("changed", on_history_changed)
 
-            # Mask option
+            # Mask option - restore from config
             mask_checkbox = Gtk.CheckButton()
             mask_checkbox.set_label("Include selection mask (applies to base layer)")
-            mask_checkbox.set_active(False)
+            last_use_mask = self.config.get("last_use_mask", False)
+            mask_checkbox.set_active(last_use_mask)
             content_area.pack_start(mask_checkbox, False, False, 5)
 
             # Add progress widget
@@ -908,6 +914,10 @@ class GimpAIPlugin(Gimp.PlugIn):
                     print(
                         f"DEBUG: Composite dialog OK - {len(visible_layers)} layers, mask: {use_mask}"
                     )
+
+                    # Save mask checkbox state to config
+                    self.config["last_use_mask"] = use_mask
+                    self._save_config()
 
                     # Disable OK button to prevent multiple clicks
                     ok_button.set_sensitive(False)
@@ -1369,6 +1379,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 b"\x00\x00\x00\x00IEND\xae B`\x82"  # IEND
             )
             return fallback_png
+
 
     def _calculate_full_image_context_extraction(self, image):
         """Calculate context extraction for full image (GPT-Image-1 mode)"""
@@ -3108,7 +3119,7 @@ class GimpAIPlugin(Gimp.PlugIn):
             with self._make_url_request(req, timeout=120) as response:
                 # More progress during data reading
                 if progress_label:
-                    self._update_dual_progress(
+                    self._update_progress(
                         progress_label, "Processing AI response...", 0.7
                     )
                 else:
@@ -3118,7 +3129,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 response_data = response.read().decode("utf-8")
 
                 if progress_label:
-                    self._update_dual_progress(
+                    self._update_progress(
                         progress_label, "Parsing AI result...", 0.75
                     )
                 else:
@@ -3646,12 +3657,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 )
 
             # Create progress callback for thread-to-UI communication
-            def progress_callback(message):
-                def update_ui():
-                    self._update_progress(progress_label, message)
-                    return False
-
-                GLib.idle_add(update_ui)
+            progress_callback = self._create_progress_callback(progress_label)
 
             # Do GIMP operations on main thread, only thread the API call
             mode = self._get_processing_mode(selected_mode)
@@ -3832,23 +3838,65 @@ class GimpAIPlugin(Gimp.PlugIn):
                 )
 
             print(f"DEBUG: Layer preparation succeeded: {message}")
+            
+            # Always create context_info for result processing (padding removal and scaling)
+            img_width = image.get_width()
+            img_height = image.get_height()
+            target_width, target_height = optimal_shape
+            
+            # Import the padding calculation function
+            from coordinate_utils import calculate_padding_for_shape
+            
+            # Create context_info for result processing
+            context_info = {
+                "mode": "full",
+                "selection_bounds": (0, 0, img_width, img_height),  # Default to full image
+                "extract_region": (0, 0, img_width, img_height),  # Full image
+                "target_shape": (target_width, target_height),
+                "target_size": max(target_width, target_height),
+                "needs_padding": True,
+                "padding_info": calculate_padding_for_shape(
+                    img_width, img_height, target_width, target_height
+                ),
+                "has_selection": False  # Will be updated if mask is used
+            }
+            
             self._update_progress(progress_label, "Creating mask...")
 
             # Prepare mask if requested
             mask_data = None
             if use_mask:
                 print("DEBUG: Preparing mask for primary layer...")
-                # Create mask based on selection for the primary layer
+                # Use the same context-based mask approach as inpainting
                 selection_bounds = Gimp.Selection.bounds(image)
                 if len(selection_bounds) >= 5 and selection_bounds[0]:
-                    # Use existing mask creation logic with optimal dimensions
-                    target_width, target_height = optimal_shape
-                    mask_data = self._create_simple_mask(target_width, target_height)
-                    print(
-                        f"DEBUG: Created mask for composite {target_width}x{target_height}"
-                    )
+                    print("DEBUG: Creating context-aware mask for layer composite...")
+                    
+                    # Get selection bounds
+                    sel_x1 = selection_bounds[2] if len(selection_bounds) > 2 else 0
+                    sel_y1 = selection_bounds[3] if len(selection_bounds) > 3 else 0
+                    sel_x2 = selection_bounds[4] if len(selection_bounds) > 4 else img_width
+                    sel_y2 = selection_bounds[5] if len(selection_bounds) > 5 else img_height
+                    
+                    # Update context_info with actual selection bounds
+                    context_info["selection_bounds"] = (sel_x1, sel_y1, sel_x2, sel_y2)
+                    context_info["has_selection"] = True
+                    
+                    # Create mask using the same function as inpainting
+                    mask_data = self._create_context_mask(image, context_info, context_info["target_size"])
+                    print(f"DEBUG: Created context-aware selection mask for composite {target_width}x{target_height}")
                 else:
-                    print("DEBUG: No selection found, skipping mask")
+                    # ERROR: User checked the mask box but there's no selection
+                    print("DEBUG: ERROR - Use mask checked but no selection found")
+                    self._update_progress(progress_label, "❌ No selection found for mask")
+                    Gimp.message(
+                        "❌ Selection Required for Mask\n\n"
+                        "You checked 'Include selection mask' but no selection was found.\n\n"
+                        "Please either:\n"
+                        "• Make a selection on your image, or\n"
+                        "• Uncheck 'Include selection mask'"
+                    )
+                    return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
 
             self._update_progress(progress_label, "🚀 Starting AI processing...")
 
@@ -3884,19 +3932,13 @@ class GimpAIPlugin(Gimp.PlugIn):
                     if "b64_json" in result_data:
                         # Base64 format (gpt-image-1)
                         print("DEBUG: Processing base64 composite result...")
-                        import base64
-
-                        print(
-                            f"DEBUG: Decoding base64 data (length: {len(result_data['b64_json'])})"
+                        
+                        # Use the same result processing as inpainting to handle padding removal and scaling
+                        print("DEBUG: Using inpainting result processing to handle padding and scaling...")
+                        success, message = self._download_and_composite_result(
+                            image, api_response, context_info, "full"
                         )
-                        image_bytes = base64.b64decode(result_data["b64_json"])
-                        print(f"DEBUG: Decoded to {len(image_bytes)} bytes")
-
-                        # Use the same proven method as image generator
-                        print(
-                            "DEBUG: Creating layer from decoded data using _add_layer_from_data..."
-                        )
-                        success = self._add_layer_from_data(image, image_bytes)
+                        
                         if success:
                             # Rename the layer to indicate it's a composite
                             new_layer = image.get_layers()[0]
@@ -3909,7 +3951,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                             Gimp.message("✅ Layer Composite completed successfully!")
                             print("DEBUG: Layer composite creation successful")
                         else:
-                            raise Exception("Failed to create layer from result data")
+                            raise Exception(f"Failed to process composite result: {message}")
 
                     elif "url" in result_data:
                         # URL format (fallback)
@@ -4042,14 +4084,7 @@ class GimpAIPlugin(Gimp.PlugIn):
 
                 print("DEBUG: [THREAD] Sending GPT-Image-1 generation request...")
                 if progress_label:
-
-                    def update_progress(msg):
-                        def update_ui():
-                            self._update_progress(progress_label, msg)
-                            return False
-
-                        GLib.idle_add(update_ui)
-
+                    update_progress = self._create_progress_callback(progress_label)
                     update_progress("🚀 Sending request to GPT-Image-1...")
 
                 # Send request

@@ -28,7 +28,11 @@
       "Bash(python:*)",
       "WebFetch(domain:docs.aimlapi.com)",
       "WebFetch(domain:github.com)",
-      "Bash(/Applications/GIMP.app/Contents/MacOS/gimp:*)"
+      "Bash(/Applications/GIMP.app/Contents/MacOS/gimp:*)",
+      "Read(/private/tmp/**)",
+      "Read(/tmp/**)",
+      "Read(/tmp/**)",
+      "Read(/tmp/**)"
     ],
     "deny": [],
     "ask": []
