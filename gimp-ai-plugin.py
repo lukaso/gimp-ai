@@ -279,7 +279,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                     progress_label.set_text(fallback)
                 except:
                     pass
-        
+
         # Update GIMP progress bar if fraction provided
         if gimp_progress is not None:
             try:
@@ -288,16 +288,19 @@ class GimpAIPlugin(Gimp.PlugIn):
                 Gimp.displays_flush()
             except:
                 pass  # Ignore if not in right context
-                
+
         return False  # Return False for GLib.idle_add compatibility
 
     def _create_progress_callback(self, progress_label):
         """Create a reusable progress callback for threading"""
+
         def progress_callback(message):
             def update_ui():
                 self._update_progress(progress_label, message)
                 return False
+
             GLib.idle_add(update_ui)
+
         return progress_callback
 
     def _create_progress_widget(self):
@@ -305,6 +308,74 @@ class GimpAIPlugin(Gimp.PlugIn):
         progress_label = Gtk.Label()
         progress_label.set_text("Ready to start...")
         return progress_label, progress_label
+
+    def _init_gimp_ui(self):
+        """Initialize GIMP UI system if not already done"""
+        if not hasattr(self, "_ui_initialized"):
+            GimpUi.init("gimp-ai-plugin")
+            self._ui_initialized = True
+
+    def _create_dialog_base(self, title="Dialog", size=(500, 400)):
+        """Create a standard GIMP dialog with consistent styling"""
+        self._init_gimp_ui()
+
+        # Create dialog with header bar detection
+        use_header_bar = Gtk.Settings.get_default().get_property(
+            "gtk-dialogs-use-header"
+        )
+        dialog = GimpUi.Dialog(use_header_bar=use_header_bar, title=title)
+
+        # Set up dialog properties
+        dialog.set_default_size(size[0], size[1])
+        dialog.set_resizable(True)
+
+        return dialog
+
+    def _setup_dialog_content_area(self, dialog, spacing=15, margin=20):
+        """Set up dialog content area with consistent styling"""
+        content_area = dialog.get_content_area()
+        content_area.set_spacing(spacing)
+        content_area.set_margin_start(margin)
+        content_area.set_margin_end(margin)
+        content_area.set_margin_top(margin)
+        content_area.set_margin_bottom(margin)
+        return content_area
+
+    def _add_api_warning_bar(self, content_area, dialog):
+        """Add API key warning info bar if needed, returns (warning_bar, ok_button_needs_config)"""
+        api_key = self._get_api_key()
+        if api_key:
+            return None, False
+
+        # Create warning info bar
+        api_warning_bar = Gtk.InfoBar()
+        api_warning_bar.set_message_type(Gtk.MessageType.WARNING)
+        api_warning_bar.set_show_close_button(False)
+
+        # Warning message
+        warning_label = Gtk.Label()
+        warning_label.set_markup("⚠️ OpenAI API key not configured")
+        warning_label.set_halign(Gtk.Align.START)
+
+        # Configure button - connect to main dialog response
+        configure_button = api_warning_bar.add_button(
+            "Configure Now", Gtk.ResponseType.APPLY
+        )
+
+        # Connect the InfoBar response to the main dialog
+        def on_configure_clicked(infobar, response_id):
+            if response_id == Gtk.ResponseType.APPLY:
+                dialog.response(Gtk.ResponseType.APPLY)
+
+        api_warning_bar.connect("response", on_configure_clicked)
+
+        # Add label to info bar content area
+        info_content = api_warning_bar.get_content_area()
+        info_content.pack_start(warning_label, False, False, 0)
+
+        content_area.pack_start(api_warning_bar, False, False, 5)
+
+        return api_warning_bar, True
 
     def _is_debug_mode(self):
         """Check if debug mode is enabled (saves temp files to /tmp)"""
@@ -345,20 +416,8 @@ class GimpAIPlugin(Gimp.PlugIn):
             else:
                 default_text = "Describe what you want to generate..."
         try:
-            # Initialize GIMP UI system (only if not already initialized)
-            if not hasattr(self, "_ui_initialized"):
-                GimpUi.init("gimp-ai-plugin")
-                self._ui_initialized = True
-
-            # Use proper GIMP dialog with header bar detection
-            use_header_bar = Gtk.Settings.get_default().get_property(
-                "gtk-dialogs-use-header"
-            )
-            dialog = GimpUi.Dialog(use_header_bar=use_header_bar, title=title)
-
-            # Set up dialog properties
-            dialog.set_default_size(600, 300)
-            dialog.set_resizable(True)
+            # Create dialog using helper methods
+            dialog = self._create_dialog_base(title, (600, 300))
 
             # Add buttons using GIMP's standard approach
             dialog.add_button(
@@ -369,52 +428,19 @@ class GimpAIPlugin(Gimp.PlugIn):
             ok_button.set_can_default(True)
             ok_button.grab_default()
 
-            # Add content with proper spacing
-            content_area = dialog.get_content_area()
-            content_area.set_spacing(10)
-            content_area.set_margin_start(20)
-            content_area.set_margin_end(20)
-            content_area.set_margin_top(20)
-            content_area.set_margin_bottom(20)
+            # Set up content area using helper
+            content_area = self._setup_dialog_content_area(dialog, spacing=10)
 
             # Label - will automatically use theme colors
             label = Gtk.Label(label="Enter your AI prompt:")
             label.set_halign(Gtk.Align.START)
             content_area.pack_start(label, False, False, 0)
 
-            # Check API key and show warning if missing
-            api_key = self._get_api_key()
-            api_warning_bar = None
-
-            if not api_key:
-                # Create warning info bar
-                api_warning_bar = Gtk.InfoBar()
-                api_warning_bar.set_message_type(Gtk.MessageType.WARNING)
-                api_warning_bar.set_show_close_button(False)
-
-                # Warning message
-                warning_label = Gtk.Label()
-                warning_label.set_markup("⚠️ OpenAI API key not configured")
-                warning_label.set_halign(Gtk.Align.START)
-
-                # Configure button - connect to main dialog response
-                configure_button = api_warning_bar.add_button(
-                    "Configure Now", Gtk.ResponseType.APPLY
-                )
-
-                # Connect the InfoBar response to the main dialog
-                def on_configure_clicked(infobar, response_id):
-                    if response_id == Gtk.ResponseType.APPLY:
-                        dialog.response(Gtk.ResponseType.APPLY)
-
-                api_warning_bar.connect("response", on_configure_clicked)
-
-                # Add label to info bar content area
-                info_content = api_warning_bar.get_content_area()
-                info_content.pack_start(warning_label, False, False, 0)
-
-                content_area.pack_start(api_warning_bar, False, False, 5)
-
+            # Add API warning bar using helper
+            api_warning_bar, needs_config = self._add_api_warning_bar(
+                content_area, dialog
+            )
+            if needs_config:
                 # Disable OK button when no API key
                 ok_button.set_sensitive(False)
                 ok_button.set_label("Configure & Continue")
@@ -699,20 +725,8 @@ class GimpAIPlugin(Gimp.PlugIn):
                 )
                 visible_layers = visible_layers[:16]
 
-            # Initialize GIMP UI system
-            if not hasattr(self, "_ui_initialized"):
-                GimpUi.init("gimp-ai-plugin")
-                self._ui_initialized = True
-
-            # Create dialog
-            use_header_bar = Gtk.Settings.get_default().get_property(
-                "gtk-dialogs-use-header"
-            )
-            dialog = GimpUi.Dialog(
-                use_header_bar=use_header_bar, title="Layer Composite"
-            )
-            dialog.set_default_size(500, 400)
-            dialog.set_resizable(True)
+            # Create dialog using helper methods
+            dialog = self._create_dialog_base("Layer Composite")
 
             # Add buttons using GIMP's standard approach
             dialog.add_button(
@@ -723,13 +737,8 @@ class GimpAIPlugin(Gimp.PlugIn):
             ok_button.set_can_default(True)
             ok_button.grab_default()
 
-            # Content area
-            content_area = dialog.get_content_area()
-            content_area.set_spacing(15)
-            content_area.set_margin_start(20)
-            content_area.set_margin_end(20)
-            content_area.set_margin_top(20)
-            content_area.set_margin_bottom(20)
+            # Set up content area using helper
+            content_area = self._setup_dialog_content_area(dialog)
 
             # Title and info
             title_label = Gtk.Label()
@@ -744,39 +753,11 @@ class GimpAIPlugin(Gimp.PlugIn):
             info_label.set_halign(Gtk.Align.START)
             content_area.pack_start(info_label, False, False, 0)
 
-            # Check API key and show warning if missing
-            api_key = self._get_api_key()
-            api_warning_bar = None
-
-            if not api_key:
-                # Create warning info bar
-                api_warning_bar = Gtk.InfoBar()
-                api_warning_bar.set_message_type(Gtk.MessageType.WARNING)
-                api_warning_bar.set_show_close_button(False)
-
-                # Warning message
-                warning_label = Gtk.Label()
-                warning_label.set_markup("⚠️ OpenAI API key not configured")
-                warning_label.set_halign(Gtk.Align.START)
-
-                # Configure button - connect to main dialog response
-                configure_button = api_warning_bar.add_button(
-                    "Configure Now", Gtk.ResponseType.APPLY
-                )
-
-                # Connect the InfoBar response to the main dialog
-                def on_configure_clicked(infobar, response_id):
-                    if response_id == Gtk.ResponseType.APPLY:
-                        dialog.response(Gtk.ResponseType.APPLY)
-
-                api_warning_bar.connect("response", on_configure_clicked)
-
-                # Add label to info bar content area
-                info_content = api_warning_bar.get_content_area()
-                info_content.pack_start(warning_label, False, False, 0)
-
-                content_area.pack_start(api_warning_bar, False, False, 5)
-
+            # Add API warning bar using helper
+            api_warning_bar, needs_config = self._add_api_warning_bar(
+                content_area, dialog
+            )
+            if needs_config:
                 # Disable OK button when no API key
                 ok_button.set_sensitive(False)
                 ok_button.set_label("Configure & Continue")
@@ -1379,7 +1360,6 @@ class GimpAIPlugin(Gimp.PlugIn):
                 b"\x00\x00\x00\x00IEND\xae B`\x82"  # IEND
             )
             return fallback_png
-
 
     def _calculate_full_image_context_extraction(self, image):
         """Calculate context extraction for full image (GPT-Image-1 mode)"""
@@ -3129,9 +3109,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                 response_data = response.read().decode("utf-8")
 
                 if progress_label:
-                    self._update_progress(
-                        progress_label, "Parsing AI result...", 0.75
-                    )
+                    self._update_progress(progress_label, "Parsing AI result...", 0.75)
                 else:
                     Gimp.progress_set_text("Parsing AI result...")
                     Gimp.progress_update(0.75)  # 75% - Parsing JSON
@@ -3838,19 +3816,24 @@ class GimpAIPlugin(Gimp.PlugIn):
                 )
 
             print(f"DEBUG: Layer preparation succeeded: {message}")
-            
+
             # Always create context_info for result processing (padding removal and scaling)
             img_width = image.get_width()
             img_height = image.get_height()
             target_width, target_height = optimal_shape
-            
+
             # Import the padding calculation function
             from coordinate_utils import calculate_padding_for_shape
-            
+
             # Create context_info for result processing
             context_info = {
                 "mode": "full",
-                "selection_bounds": (0, 0, img_width, img_height),  # Default to full image
+                "selection_bounds": (
+                    0,
+                    0,
+                    img_width,
+                    img_height,
+                ),  # Default to full image
                 "extract_region": (0, 0, img_width, img_height),  # Full image
                 "target_shape": (target_width, target_height),
                 "target_size": max(target_width, target_height),
@@ -3858,9 +3841,9 @@ class GimpAIPlugin(Gimp.PlugIn):
                 "padding_info": calculate_padding_for_shape(
                     img_width, img_height, target_width, target_height
                 ),
-                "has_selection": False  # Will be updated if mask is used
+                "has_selection": False,  # Will be updated if mask is used
             }
-            
+
             self._update_progress(progress_label, "Creating mask...")
 
             # Prepare mask if requested
@@ -3871,24 +3854,34 @@ class GimpAIPlugin(Gimp.PlugIn):
                 selection_bounds = Gimp.Selection.bounds(image)
                 if len(selection_bounds) >= 5 and selection_bounds[0]:
                     print("DEBUG: Creating context-aware mask for layer composite...")
-                    
+
                     # Get selection bounds
                     sel_x1 = selection_bounds[2] if len(selection_bounds) > 2 else 0
                     sel_y1 = selection_bounds[3] if len(selection_bounds) > 3 else 0
-                    sel_x2 = selection_bounds[4] if len(selection_bounds) > 4 else img_width
-                    sel_y2 = selection_bounds[5] if len(selection_bounds) > 5 else img_height
-                    
+                    sel_x2 = (
+                        selection_bounds[4] if len(selection_bounds) > 4 else img_width
+                    )
+                    sel_y2 = (
+                        selection_bounds[5] if len(selection_bounds) > 5 else img_height
+                    )
+
                     # Update context_info with actual selection bounds
                     context_info["selection_bounds"] = (sel_x1, sel_y1, sel_x2, sel_y2)
                     context_info["has_selection"] = True
-                    
+
                     # Create mask using the same function as inpainting
-                    mask_data = self._create_context_mask(image, context_info, context_info["target_size"])
-                    print(f"DEBUG: Created context-aware selection mask for composite {target_width}x{target_height}")
+                    mask_data = self._create_context_mask(
+                        image, context_info, context_info["target_size"]
+                    )
+                    print(
+                        f"DEBUG: Created context-aware selection mask for composite {target_width}x{target_height}"
+                    )
                 else:
                     # ERROR: User checked the mask box but there's no selection
                     print("DEBUG: ERROR - Use mask checked but no selection found")
-                    self._update_progress(progress_label, "❌ No selection found for mask")
+                    self._update_progress(
+                        progress_label, "❌ No selection found for mask"
+                    )
                     Gimp.message(
                         "❌ Selection Required for Mask\n\n"
                         "You checked 'Include selection mask' but no selection was found.\n\n"
@@ -3896,7 +3889,9 @@ class GimpAIPlugin(Gimp.PlugIn):
                         "• Make a selection on your image, or\n"
                         "• Uncheck 'Include selection mask'"
                     )
-                    return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
+                    return procedure.new_return_values(
+                        Gimp.PDBStatusType.CANCEL, GLib.Error()
+                    )
 
             self._update_progress(progress_label, "🚀 Starting AI processing...")
 
@@ -3932,13 +3927,15 @@ class GimpAIPlugin(Gimp.PlugIn):
                     if "b64_json" in result_data:
                         # Base64 format (gpt-image-1)
                         print("DEBUG: Processing base64 composite result...")
-                        
+
                         # Use the same result processing as inpainting to handle padding removal and scaling
-                        print("DEBUG: Using inpainting result processing to handle padding and scaling...")
+                        print(
+                            "DEBUG: Using inpainting result processing to handle padding and scaling..."
+                        )
                         success, message = self._download_and_composite_result(
                             image, api_response, context_info, "full"
                         )
-                        
+
                         if success:
                             # Rename the layer to indicate it's a composite
                             new_layer = image.get_layers()[0]
@@ -3951,7 +3948,9 @@ class GimpAIPlugin(Gimp.PlugIn):
                             Gimp.message("✅ Layer Composite completed successfully!")
                             print("DEBUG: Layer composite creation successful")
                         else:
-                            raise Exception(f"Failed to process composite result: {message}")
+                            raise Exception(
+                                f"Failed to process composite result: {message}"
+                            )
 
                     elif "url" in result_data:
                         # URL format (fallback)
