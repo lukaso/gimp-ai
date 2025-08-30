@@ -3585,6 +3585,10 @@ class GimpAIPlugin(Gimp.PlugIn):
     def run_inpaint(self, procedure, run_mode, image, drawables, config, run_data):
         print("DEBUG: AI Inpaint Selection called!")
 
+        # Save the currently selected layers before any API calls that might clear them
+        original_selected_layers = image.get_selected_layers()
+        print(f"DEBUG: Saved {len(original_selected_layers)} originally selected layers")
+
         # Step 1: Check for active selection FIRST
         print("DEBUG: Checking for active selection...")
         selection_bounds = Gimp.Selection.bounds(image)
@@ -3600,6 +3604,10 @@ class GimpAIPlugin(Gimp.PlugIn):
                 "2. Select the area you want to inpaint\n"
                 "3. Run AI Inpaint Selection again"
             )
+            # Restore layer selection before returning
+            if original_selected_layers:
+                image.set_selected_layers(original_selected_layers)
+                print("DEBUG: Restored layer selection after no canvas selection error")
             return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
 
         print("DEBUG: Selection found - proceeding with inpainting")
@@ -3616,6 +3624,10 @@ class GimpAIPlugin(Gimp.PlugIn):
 
         if not dialog_result:
             print("DEBUG: User cancelled prompt dialog")
+            # Restore layer selection before returning
+            if original_selected_layers:
+                image.set_selected_layers(original_selected_layers)
+                print("DEBUG: Restored layer selection after dialog cancel")
             return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
 
         # Extract dialog, progress_label, prompt and mode from dialog result
@@ -3760,12 +3772,20 @@ class GimpAIPlugin(Gimp.PlugIn):
             # Always destroy the dialog
             if dialog:
                 dialog.destroy()
+            # Always restore original layer selection after any operation outcome
+            if original_selected_layers:
+                image.set_selected_layers(original_selected_layers)
+                print("DEBUG: Restored layer selection after inpaint operation")
 
     def run_layer_composite(
         self, procedure, run_mode, image, drawables, config, run_data
     ):
         """Layer Composite - combine multiple layers using OpenAI API"""
         print("DEBUG: Layer Composite called!")
+
+        # Save the currently selected layers before showing dialog (which queries layers and might clear selection)
+        original_selected_layers = image.get_selected_layers()
+        print(f"DEBUG: Saved {len(original_selected_layers)} originally selected layers")
 
         # Step 1: Show prompt dialog with layer selection
         print("DEBUG: Showing layer composite dialog...")
@@ -3774,6 +3794,10 @@ class GimpAIPlugin(Gimp.PlugIn):
 
         if not dialog_result:
             print("DEBUG: User cancelled prompt dialog")
+            # Restore layer selection before returning
+            if original_selected_layers:
+                image.set_selected_layers(original_selected_layers)
+                print("DEBUG: Restored layer selection after dialog cancel")
             return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
 
         # Handle composite dialog result: (dialog, progress_label, prompt, layers, use_mask)
@@ -4000,6 +4024,10 @@ class GimpAIPlugin(Gimp.PlugIn):
             # Always destroy the dialog
             if dialog:
                 dialog.destroy()
+            # Always restore original layer selection after any operation outcome
+            if original_selected_layers:
+                image.set_selected_layers(original_selected_layers)
+                print("DEBUG: Restored layer selection after layer composite operation")
 
     def _create_image_from_data(self, image_data):
         """Helper function to create GIMP image from binary data"""
