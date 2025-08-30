@@ -242,29 +242,39 @@ class GimpAIPlugin(Gimp.PlugIn):
                 # Ensure the message is properly encoded for GTK
                 # GTK should handle UTF-8 properly, but let's be explicit
                 if isinstance(message, str):
-                    encoded_message = message.encode('utf-8').decode('utf-8')
+                    encoded_message = message.encode("utf-8").decode("utf-8")
                 else:
                     encoded_message = str(message)
-                
+
                 # Use GLib.idle_add to ensure the update happens on the main thread
                 def update_ui():
                     try:
-                        print(f"DEBUG: Actually updating progress label to: {encoded_message}")
+                        print(
+                            f"DEBUG: Actually updating progress label to: {encoded_message}"
+                        )
                         progress_label.set_text(encoded_message)
-                        progress_label.set_use_markup(False)  # Use plain text, not markup
-                        print(f"DEBUG: Progress label text is now: {progress_label.get_text()}")
+                        progress_label.set_use_markup(
+                            False
+                        )  # Use plain text, not markup
+                        print(
+                            f"DEBUG: Progress label text is now: {progress_label.get_text()}"
+                        )
                         return False  # Remove from idle queue after running once
                     except Exception as e:
                         print(f"DEBUG: UI update failed: {e}")
                         return False
-                
+
                 # Queue the update on the main thread
                 GLib.idle_add(update_ui)
-                    
+
             except Exception as e:
                 print(f"DEBUG: Progress update failed: {e}")
                 # Fallback without emojis if there's encoding issue
-                fallback = message.encode('ascii', 'ignore').decode('ascii') if message else "Processing..."
+                fallback = (
+                    message.encode("ascii", "ignore").decode("ascii")
+                    if message
+                    else "Processing..."
+                )
                 try:
                     progress_label.set_text(fallback)
                 except:
@@ -275,7 +285,7 @@ class GimpAIPlugin(Gimp.PlugIn):
         """Update both dialog progress label and GIMP progress bar consistently"""
         # Update dialog progress
         self._update_progress(progress_label, message)
-        
+
         # Update GIMP progress bar if fraction provided
         if gimp_progress is not None:
             try:
@@ -305,14 +315,16 @@ class GimpAIPlugin(Gimp.PlugIn):
         # Process GTK events more aggressively for better UI responsiveness
         try:
             # Process multiple pending events to improve responsiveness
-            if hasattr(Gtk, 'events_pending'):
+            if hasattr(Gtk, "events_pending"):
                 event_count = 0
-                while Gtk.events_pending() and event_count < 5:  # Process up to 5 events
+                while (
+                    Gtk.events_pending() and event_count < 5
+                ):  # Process up to 5 events
                     Gtk.main_iteration_do(False)  # Non-blocking iteration
                     event_count += 1
         except Exception as e:
             print(f"DEBUG: GTK event processing warning (non-fatal): {e}")
-        
+
         return self._cancel_requested
 
     def _show_prompt_dialog(
@@ -594,7 +606,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                     # Disable OK button to prevent multiple clicks
                     ok_button.set_sensitive(False)
                     ok_button.set_label("Processing...")
-                    
+
                     # Update progress
                     self._update_progress(progress_label, "Validating API key...")
 
@@ -606,7 +618,7 @@ class GimpAIPlugin(Gimp.PlugIn):
 
                     # Reset cancel flag for new operation
                     self._cancel_requested = False
-                    
+
                     # Add cancel handler to keep dialog responsive during processing
                     def on_dialog_response(dialog, response_id):
                         if response_id == Gtk.ResponseType.CANCEL:
@@ -614,11 +626,15 @@ class GimpAIPlugin(Gimp.PlugIn):
                             self._cancel_requested = True
                             return True  # Keep dialog open
                         return False
-                    
+
                     dialog.connect("response", on_dialog_response)
 
                     # Return dialog, progress_label, and prompt data for processing
-                    return (dialog, progress_label, prompt, selected_mode) if prompt else None
+                    return (
+                        (dialog, progress_label, prompt, selected_mode)
+                        if prompt
+                        else None
+                    )
                 elif response == Gtk.ResponseType.APPLY:  # Configure Now button
                     print("DEBUG: Configure Now button clicked")
                     self._show_settings_dialog(dialog)
@@ -773,10 +789,14 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             for i, layer in enumerate(visible_layers):
                 layer_label = Gtk.Label()
-                if i == len(visible_layers) - 1:  # Last layer is the base (bottom) layer
+                if (
+                    i == len(visible_layers) - 1
+                ):  # Last layer is the base (bottom) layer
                     layer_label.set_text(f"Base: {layer.get_name()} (primary layer)")
                 else:
-                    layer_label.set_text(f"Layer {len(visible_layers) - 1 - i}: {layer.get_name()}")
+                    layer_label.set_text(
+                        f"Layer {len(visible_layers) - 1 - i}: {layer.get_name()}"
+                    )
                 layer_label.set_halign(Gtk.Align.START)
                 layer_box.pack_start(layer_label, False, False, 2)
 
@@ -892,7 +912,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                     # Disable OK button to prevent multiple clicks
                     ok_button.set_sensitive(False)
                     ok_button.set_label("Processing...")
-                    
+
                     # Update progress
                     self._update_progress(progress_label, "Validating API key...")
 
@@ -901,7 +921,7 @@ class GimpAIPlugin(Gimp.PlugIn):
 
                     # Reset cancel flag for new operation
                     self._cancel_requested = False
-                    
+
                     # Add cancel handler to keep dialog responsive during processing
                     def on_dialog_response(dialog, response_id):
                         if response_id == Gtk.ResponseType.CANCEL:
@@ -909,11 +929,17 @@ class GimpAIPlugin(Gimp.PlugIn):
                             self._cancel_requested = True
                             return True  # Keep dialog open
                         return False
-                    
+
                     dialog.connect("response", on_dialog_response)
 
                     # Return dialog, progress_label, and data for processing
-                    return (dialog, progress_label, prompt.strip(), visible_layers, use_mask)
+                    return (
+                        dialog,
+                        progress_label,
+                        prompt.strip(),
+                        visible_layers,
+                        use_mask,
+                    )
 
                 elif response == Gtk.ResponseType.HELP:
                     print("DEBUG: Settings button clicked")
@@ -1049,7 +1075,9 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             # Debug explanation
             debug_info = Gtk.Label()
-            debug_info.set_text("Saves intermediate AI processing images for troubleshooting")
+            debug_info.set_text(
+                "Saves intermediate AI processing images for troubleshooting"
+            )
             debug_info.set_halign(Gtk.Align.START)
             debug_info.get_style_context().add_class("dim-label")
             debug_box.pack_start(debug_info, False, False, 0)
@@ -1070,7 +1098,7 @@ class GimpAIPlugin(Gimp.PlugIn):
                         self.config["openai"] = {}
                     self.config["openai"]["api_key"] = new_key
                     print("DEBUG: API key updated")
-                
+
                 # Save debug mode setting
                 debug_mode = debug_checkbox.get_active()
                 self.config["debug_mode"] = debug_mode
@@ -1087,50 +1115,6 @@ class GimpAIPlugin(Gimp.PlugIn):
         self.config["prompt_history"] = []
         self._save_config()
         print("DEBUG: Prompt history cleared")
-
-    def _test_image_access(self, image, drawables):
-        """Test basic image data access"""
-        try:
-            if not image:
-                return False, "No image provided"
-
-            if not drawables or len(drawables) == 0:
-                return False, "No drawable/layer provided"
-
-            drawable = drawables[0]  # Use first drawable
-
-            # Get basic image info
-            width = image.get_width()
-            height = image.get_height()
-            precision = image.get_precision()
-            base_type = image.get_base_type()
-
-            # Get drawable info
-            drawable_width = drawable.get_width()
-            drawable_height = drawable.get_height()
-            has_alpha = drawable.has_alpha()
-            drawable_name = (
-                drawable.get_name() if hasattr(drawable, "get_name") else "Unknown"
-            )
-
-            # Basic info without buffer access for now
-            info = (
-                f"Image: {width}x{height}, precision: {precision}, base type: {base_type}\n"
-                f"Drawable: '{drawable_name}', {drawable_width}x{drawable_height}, alpha: {has_alpha}"
-            )
-
-            # Try to access buffer information safely
-            try:
-                buffer = drawable.get_buffer()
-                buffer_info = f"\nBuffer: Available (type: {type(buffer).__name__})"
-                info += buffer_info
-            except Exception as e:
-                info += f"\nBuffer: Not accessible ({str(e)})"
-
-            return True, info
-
-        except Exception as e:
-            return False, f"Image access error: {str(e)}"
 
     def _extract_context_region(self, image, context_info):
         """Extract context region and scale to optimal OpenAI shape"""
@@ -1309,201 +1293,6 @@ class GimpAIPlugin(Gimp.PlugIn):
             print(f"DEBUG: Context extraction failed: {e}")
             return False, f"Context extraction error: {str(e)}", None
 
-    def _export_image_for_ai(self, image, drawable, max_size=1024):
-        """Export image as base64-encoded PNG for AI APIs"""
-        try:
-            print(f"DEBUG: Exporting image for AI, max_size={max_size}")
-
-            # Validate inputs
-            if not image:
-                return False, "Error: No image provided", None, 0, 0
-
-            if max_size < 64 or max_size > 2048:
-                return (
-                    False,
-                    f"Error: Invalid max_size {max_size} (must be 64-2048)",
-                    None,
-                    0,
-                    0,
-                )
-
-            # Check if image has valid dimensions
-            orig_width = image.get_width()
-            orig_height = image.get_height()
-
-            if orig_width == 0 or orig_height == 0:
-                return (
-                    False,
-                    f"Error: Invalid image dimensions {orig_width}x{orig_height}",
-                    None,
-                    0,
-                    0,
-                )
-
-            if orig_width > 4096 or orig_height > 4096:
-                return (
-                    False,
-                    f"Error: Image too large {orig_width}x{orig_height} (max 4096x4096)",
-                    None,
-                    0,
-                    0,
-                )
-
-            print(f"DEBUG: Original image dimensions: {orig_width}x{orig_height}")
-
-            # Create a temporary image copy for export
-            temp_image = image.duplicate()
-            if not temp_image:
-                return False, "Error: Failed to duplicate image", None, 0, 0
-
-            # Get the active layer from the temp image
-            layers = temp_image.get_layers()
-            if not layers or len(layers) == 0:
-                temp_image.delete()
-                return False, "Error: No layers found in image", None, 0, 0
-
-            temp_drawable = layers[0]  # Use first layer
-
-            # Get dimensions
-            width = temp_image.get_width()
-            height = temp_image.get_height()
-
-            # Resize to square format for OpenAI (they prefer square images)
-            if width != max_size or height != max_size:
-                print(
-                    f"DEBUG: Resizing from {width}x{height} to {max_size}x{max_size} (square)"
-                )
-                temp_image.scale(max_size, max_size)
-
-            # Export to temporary file
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
-                temp_filename = temp_file.name
-
-            try:
-                # Use GIMP's export function (GIMP 3.x style)
-                print(f"DEBUG: Attempting to export to {temp_filename}")
-
-                # Try different export approaches for GIMP 3.x
-                export_success = False
-
-                # Use GIMP's built-in export functionality
-                try:
-                    print("DEBUG: Trying GIMP file export")
-
-                    # Use Gimp.file_export to create real PNG
-                    file = Gio.File.new_for_path(temp_filename)
-
-                    # Try to export using GIMP's PNG export PDB procedure
-                    try:
-                        print("DEBUG: Trying PNG export via PDB procedure")
-
-                        pdb_proc = Gimp.get_pdb().lookup_procedure("file-png-export")
-                        pdb_config = pdb_proc.create_config()
-                        pdb_config.set_property("run-mode", Gimp.RunMode.NONINTERACTIVE)
-                        pdb_config.set_property("image", temp_image)
-                        pdb_config.set_property("file", file)
-                        pdb_config.set_property("options", None)
-
-                        result = pdb_proc.run(pdb_config)
-                        if result.index(0) == Gimp.PDBStatusType.SUCCESS:
-                            export_success = True
-                            print(
-                                "DEBUG: GIMP PNG export successful - using GIMP export"
-                            )
-                        else:
-                            print(
-                                f"DEBUG: GIMP PNG export failed: {result.index(0)}, trying fallback"
-                            )
-                            export_success = False
-                    except Exception as e:
-                        print(f"DEBUG: GIMP export exception: {e}, trying fallback")
-                        export_success = False
-
-                    # If GIMP export failed, create a simple PNG with actual image dimensions
-                    if not export_success:
-                        print("DEBUG: Creating fallback PNG")
-                        width = temp_image.get_width()
-                        height = temp_image.get_height()
-
-                        # Create a simple solid color PNG with correct dimensions
-                        import zlib
-
-                        # Create IHDR chunk data (RGB format)
-                        ihdr_data = (
-                            width.to_bytes(4, "big")  # Width
-                            + height.to_bytes(4, "big")  # Height
-                            + b"\x08\x02\x00\x00\x00"  # 8-bit RGB, no compression/filter/interlace
-                        )
-
-                        # Calculate IHDR CRC
-                        ihdr_crc = zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF
-
-                        # Create simple image data (gray pixels)
-                        row_data = (
-                            b"\x00" + b"\x80\x80\x80" * width
-                        )  # Filter byte + gray RGB pixels
-                        image_data = row_data * height
-                        compressed_data = zlib.compress(image_data)
-
-                        # Calculate IDAT CRC
-                        idat_crc = zlib.crc32(b"IDAT" + compressed_data) & 0xFFFFFFFF
-
-                        # Build complete PNG
-                        png_data = (
-                            b"\x89PNG\r\n\x1a\n"  # PNG signature
-                            + len(ihdr_data).to_bytes(4, "big")
-                            + b"IHDR"  # IHDR chunk length + type
-                            + ihdr_data
-                            + ihdr_crc.to_bytes(4, "big")  # IHDR data + CRC
-                            + len(compressed_data).to_bytes(4, "big")
-                            + b"IDAT"  # IDAT chunk length + type
-                            + compressed_data
-                            + idat_crc.to_bytes(4, "big")  # IDAT data + CRC
-                            + b"\x00\x00\x00\x00IEND\xae B`\x82"  # IEND chunk
-                        )
-
-                        with open(temp_filename, "wb") as f:
-                            f.write(png_data)
-
-                        export_success = True
-                        print(
-                            f"DEBUG: Fallback PNG created: {len(png_data)} bytes for {width}x{height}"
-                        )
-
-                except Exception as e:
-                    print(f"DEBUG: PNG creation failed: {e}")
-                    return False, f"PNG creation failed: {e}", None, None, None
-
-                print(f"DEBUG: Export success: {export_success}")
-                if not export_success:
-                    return False, "Export to PNG failed", None, None, None
-
-                # Read the exported file and encode to base64
-                with open(temp_filename, "rb") as f:
-                    png_data = f.read()
-
-                base64_data = base64.b64encode(png_data).decode("utf-8")
-
-                # Get final dimensions after any resizing
-                final_width = temp_image.get_width()
-                final_height = temp_image.get_height()
-
-                # Clean up
-                os.unlink(temp_filename)
-                temp_image.delete()
-
-                info = f"Exported {len(png_data)} bytes as PNG, base64 length: {len(base64_data)}"
-                return True, info, base64_data, final_width, final_height
-
-            except Exception as e:
-                # Clean up on error
-                if os.path.exists(temp_filename):
-                    os.unlink(temp_filename)
-                return False, f"Export process failed: {str(e)}", None, None, None
-
-        except Exception as e:
-            return False, f"Image export error: {str(e)}", None, None, None
-
     def _create_simple_mask(self, width=512, height=512):
         """Create a test mask with transparent center area for inpainting using GIMP (PNG)"""
         try:
@@ -1580,65 +1369,6 @@ class GimpAIPlugin(Gimp.PlugIn):
                 b"\x00\x00\x00\x00IEND\xae B`\x82"  # IEND
             )
             return fallback_png
-
-    def _create_black_mask(self, width=512, height=512):
-        """Create a mask with black center circle (for testing different mask formats)"""
-        try:
-            print(f"DEBUG: Creating black center circle mask {width}x{height}")
-
-            # Create IHDR chunk data (L - grayscale format for OpenAI mask)
-            ihdr_data = (
-                width.to_bytes(4, "big")
-                + height.to_bytes(4, "big")
-                + b"\x08\x00\x00\x00\x00"  # 8-bit grayscale (L format)
-            )
-
-            # Calculate IHDR CRC
-            import zlib
-
-            ihdr_crc = zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF
-
-            # Create image data with black center circle
-            image_rows = []
-            center_x, center_y = width // 2, height // 2
-            radius = min(width, height) // 4
-
-            for y in range(height):
-                row = b"\x00"  # Filter byte
-                for x in range(width):
-                    distance = ((x - center_x) ** 2 + (y - center_y) ** 2) ** 0.5
-                    if distance <= radius:
-                        # Black grayscale (0 = inpaint this area)
-                        row += b"\x00"
-                    else:
-                        # White grayscale (255 = keep original)
-                        row += b"\xff"
-                image_rows.append(row)
-
-            image_data = b"".join(image_rows)
-            compressed_data = zlib.compress(image_data)
-            idat_crc = zlib.crc32(b"IDAT" + compressed_data) & 0xFFFFFFFF
-
-            # Build PNG
-            png_data = (
-                b"\x89PNG\r\n\x1a\n"
-                + len(ihdr_data).to_bytes(4, "big")
-                + b"IHDR"
-                + ihdr_data
-                + ihdr_crc.to_bytes(4, "big")
-                + len(compressed_data).to_bytes(4, "big")
-                + b"IDAT"
-                + compressed_data
-                + idat_crc.to_bytes(4, "big")
-                + b"\x00\x00\x00\x00IEND\xae B`\x82"
-            )
-
-            print(f"DEBUG: Created black circle mask PNG: {len(png_data)} bytes")
-            return png_data
-
-        except Exception as e:
-            print(f"DEBUG: Failed to create black mask: {e}")
-            return self._create_simple_mask(width, height)
 
     def _calculate_full_image_context_extraction(self, image):
         """Calculate context extraction for full image (GPT-Image-1 mode)"""
@@ -1948,14 +1678,16 @@ class GimpAIPlugin(Gimp.PlugIn):
             print(f"DEBUG: Full image extraction failed: {e}")
             return False, f"Full image extraction failed: {str(e)}", None
 
-    def _call_openai_generation(self, prompt, api_key, size="auto", progress_label=None):
+    def _call_openai_generation(
+        self, prompt, api_key, size="auto", progress_label=None
+    ):
         """Call OpenAI GPT-Image-1 API for image generation with progress updates"""
         try:
             import json
             import urllib.request
-            
+
             print(f"DEBUG: Calling GPT-Image-1 generation API with prompt: {prompt}")
-            
+
             # Determine optimal size
             if size == "auto":
                 optimal_size = "1536x1024"  # Default landscape
@@ -1966,7 +1698,7 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             # Prepare the request data
             data = {
-                "model": "gpt-image-1", 
+                "model": "gpt-image-1",
                 "prompt": prompt,
                 "n": 1,
                 "size": optimal_size,
@@ -1981,30 +1713,33 @@ class GimpAIPlugin(Gimp.PlugIn):
             req.add_header("Authorization", f"Bearer {api_key}")
 
             print("DEBUG: Sending real GPT-Image-1 generation request...")
-            
+
             # Progress during network operation (same pattern as _call_openai_edit)
             if progress_label:
-                self._update_progress(progress_label, "🚀 Sending request to GPT-Image-1...")
+                self._update_progress(
+                    progress_label, "🚀 Sending request to GPT-Image-1..."
+                )
 
             # Make the API call with progress updates during the call
             with self._make_url_request(req, timeout=180) as response:
                 response_data = json.loads(response.read().decode("utf-8"))
 
             print("DEBUG: GPT-Image-1 generation response received")
-            
+
             if progress_label:
                 self._update_progress(progress_label, "✅ Processing AI response...")
 
             # Process the response
             if "data" in response_data and len(response_data["data"]) > 0:
                 result_data = response_data["data"][0]
-                
+
                 if "b64_json" in result_data:
                     print("DEBUG: Processing base64 image data from GPT-Image-1")
                     import base64
+
                     image_data = base64.b64decode(result_data["b64_json"])
                     print(f"DEBUG: Decoded {len(image_data)} bytes of image data")
-                    
+
                     return True, "Image generation successful", image_data
                 else:
                     print("ERROR: No b64_json in GPT-Image-1 response")
@@ -2012,88 +1747,101 @@ class GimpAIPlugin(Gimp.PlugIn):
             else:
                 print("ERROR: No data in GPT-Image-1 response")
                 return False, "No data in API response", None
-                
+
         except Exception as e:
             print(f"ERROR: GPT-Image-1 generation API call failed: {str(e)}")
             return False, str(e), None
 
-    def _call_openai_generation_threaded(self, prompt, api_key, size="auto", progress_label=None):
+    def _call_openai_generation_threaded(
+        self, prompt, api_key, size="auto", progress_label=None
+    ):
         """Threaded wrapper for OpenAI image generation API call to keep UI responsive"""
         import threading
         import time
-        
+
         print("DEBUG: Starting threaded OpenAI generation API call...")
-        
+
         # Shared storage for results
-        result = {'success': False, 'message': '', 'image_data': None, 'completed': False}
-        
+        result = {
+            "success": False,
+            "message": "",
+            "image_data": None,
+            "completed": False,
+        }
+
         def network_thread():
             try:
                 # Call the new blocking function with progress label (same pattern as _call_openai_edit_threaded)
                 success, message, image_data = self._call_openai_generation(
                     prompt, api_key, size, progress_label
                 )
-                result['success'] = success
-                result['message'] = message
-                result['image_data'] = image_data
+                result["success"] = success
+                result["message"] = message
+                result["image_data"] = image_data
             except Exception as e:
                 print(f"DEBUG: [THREAD] Generation exception: {e}")
-                result['success'] = False
-                result['message'] = str(e)
-                result['image_data'] = None
+                result["success"] = False
+                result["message"] = str(e)
+                result["image_data"] = None
             finally:
-                result['completed'] = True
-        
+                result["completed"] = True
+
         # Start thread
         thread = threading.Thread(target=network_thread)
         thread.daemon = True
         thread.start()
-        
+
         # Keep UI responsive while waiting - same pattern as _call_openai_edit_threaded
         max_wait_time = 300  # 5 minutes maximum wait
         start_time = time.time()
         last_update_time = start_time
-        
+
         print(f"DEBUG: Starting wait loop, progress_label={progress_label is not None}")
-        while not result['completed']:
+        while not result["completed"]:
             current_time = time.time()
             elapsed = current_time - start_time
-            
+
             # Update progress every 5 seconds for testing (reduced from 30)
             if progress_label and current_time - last_update_time > 5:
                 print(f"DEBUG: About to call _update_progress at {elapsed:.1f}s")
                 minutes = int(elapsed // 60)
                 if minutes > 0:
-                    self._update_progress(progress_label, f"Still processing... ({minutes}m elapsed)")
+                    self._update_progress(
+                        progress_label, f"Still processing... ({minutes}m elapsed)"
+                    )
                 else:
-                    self._update_progress(progress_label, f"Processing... ({elapsed:.1f}s elapsed)")
+                    self._update_progress(
+                        progress_label, f"Processing... ({int(elapsed)}s elapsed)"
+                    )
                 last_update_time = current_time
                 print(f"DEBUG: _update_progress call completed")
-            
+
             # Check for cancellation - use same method as working function
             if self._check_cancel_and_process_events():
                 print("DEBUG: Generation operation cancelled by user")
                 if progress_label:
                     self._update_progress(progress_label, "❌ Operation cancelled")
-                result['success'] = False
-                result['message'] = "Operation cancelled by user"
+                result["success"] = False
+                result["message"] = "Operation cancelled by user"
                 break
-            
+
             # Check for timeout
             if elapsed > max_wait_time:
                 print(f"DEBUG: Generation thread timeout after {max_wait_time} seconds")
                 if progress_label:
                     self._update_progress(progress_label, "❌ Request timed out")
-                result['success'] = False
-                result['message'] = "Request timed out - check internet connection"
+                result["success"] = False
+                result["message"] = "Request timed out - check internet connection"
                 break
-            
+
             # Small delay to prevent busy waiting (reduced for better responsiveness)
             time.sleep(0.05)
-        
-        print(f"DEBUG: [MAIN] Wait loop ended, final result: success={result['success']}, message='{result['message']}')")
-        
-        return result['success'], result['message'], result['image_data']
+
+        print(
+            f"DEBUG: [MAIN] Wait loop ended, final result: success={result['success']}, message='{result['message']}')"
+        )
+
+        return result["success"], result["message"], result["image_data"]
 
     def _prepare_layers_for_composite(self, selected_layers):
         """Prepare multiple layers for OpenAI composite API - each layer as separate PNG"""
@@ -2257,114 +2005,6 @@ class GimpAIPlugin(Gimp.PlugIn):
         except Exception as e:
             print(f"DEBUG: PNG export failed: {e}")
             return None
-
-    def _create_full_image_mask(self, image, selection_bounds, context_info):
-        """Create mask for full image with selection area marked for transformation"""
-        try:
-            print("DEBUG: Creating full image mask with selection area")
-
-            target_width, target_height = context_info["scaled_size"]
-            scale_factor = context_info["scale_factor"]
-
-            # Scale selection bounds to match scaled image
-            sel_x1, sel_y1, sel_x2, sel_y2 = selection_bounds
-            scaled_sel_x1 = int(sel_x1 * scale_factor)
-            scaled_sel_y1 = int(sel_y1 * scale_factor)
-            scaled_sel_x2 = int(sel_x2 * scale_factor)
-            scaled_sel_y2 = int(sel_y2 * scale_factor)
-
-            print(
-                f"DEBUG: Scaled selection: ({scaled_sel_x1},{scaled_sel_y1}) to ({scaled_sel_x2},{scaled_sel_y2})"
-            )
-
-            # Create mask image (RGBA for transparency)
-            mask_image = Gimp.Image.new(
-                target_width, target_height, Gimp.ImageBaseType.RGB
-            )
-            mask_layer = Gimp.Layer.new(
-                mask_image,
-                "mask",
-                target_width,
-                target_height,
-                Gimp.ImageType.RGBA_IMAGE,
-                100.0,
-                Gimp.LayerMode.NORMAL,
-            )
-            mask_image.insert_layer(mask_layer, None, 0)
-
-            # Fill with opaque white (preserve areas)
-            from gi.repository import Gegl
-
-            white_color = Gegl.Color.new("white")
-            mask_layer.get_shadow_buffer().clear(white_color)
-
-            # Create transparent rectangle for selection area (inpaint area)
-            # For RGBA transparency, we need to use a specific transparent color
-            transparent_color = Gegl.Color()
-            transparent_color.set_rgba(0.0, 0.0, 0.0, 0.0)  # Transparent black
-            mask_buffer = mask_layer.get_shadow_buffer()
-
-            # Fill selection rectangle with transparency
-            width = scaled_sel_x2 - scaled_sel_x1
-            height = scaled_sel_y2 - scaled_sel_y1
-            if width > 0 and height > 0:
-                # Simple rectangle mask for now
-                rect = Gegl.Rectangle.new(scaled_sel_x1, scaled_sel_y1, width, height)
-                mask_buffer.set_color(rect, transparent_color)
-
-            # Merge shadow buffer with base layer
-            mask_layer.merge_shadow(True)
-            mask_layer.update(0, 0, target_width, target_height)
-
-            # Export mask as PNG
-            import tempfile
-
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
-                temp_path = temp_file.name
-
-            # Use GIMP's export function
-            export_options = Gimp.ProcedureConfig.new_from_procedure(
-                Gimp.get_pdb().lookup_procedure("file-png-export")
-            )
-            export_options.set_property("interlace", False)
-            export_options.set_property("compression", 9)
-
-            result = Gimp.get_pdb().run_procedure(
-                "file-png-export",
-                [
-                    Gimp.RunMode.NONINTERACTIVE,
-                    mask_image,
-                    temp_path,
-                    export_options,
-                ],
-            )
-
-            if not result.get_status() == Gimp.PDBStatusType.SUCCESS:
-                raise Exception("Failed to export mask image")
-
-            # Read the PNG data
-            with open(temp_path, "rb") as f:
-                mask_data = f.read()
-
-            # Clean up
-            os.unlink(temp_path)
-            mask_image.delete()
-
-            print(f"DEBUG: Created full image mask: {len(mask_data)} bytes")
-            return mask_data
-
-        except Exception as e:
-            print(f"DEBUG: Full image mask creation failed: {e}")
-            # Return a simple white mask as fallback
-            import io
-            from PIL import Image
-
-            mask_img = Image.new(
-                "RGBA", context_info["scaled_size"], (255, 255, 255, 255)
-            )  # Opaque white mask
-            mask_bytes = io.BytesIO()
-            mask_img.save(mask_bytes, format="PNG")
-            return mask_bytes.getvalue()
 
     def _create_full_size_mask_then_scale(self, image, selection_channel, context_info):
         """Create mask at full original size, then scale/pad using same operations as image"""
@@ -3119,100 +2759,6 @@ class GimpAIPlugin(Gimp.PlugIn):
         except Exception as e:
             print(f"DEBUG: Color matching failed: {e}")
 
-    def _create_mask_from_selection(self, image, width, height):
-        """Create a transparent mask from GIMP selection (legacy method)"""
-        try:
-            print(f"DEBUG: Creating mask from selection {width}x{height} (legacy)")
-
-            # Check if there's a selection
-            selection_bounds = Gimp.Selection.bounds(image)
-            print(f"DEBUG: Selection bounds raw: {selection_bounds}")
-
-            # Handle the named tuple return value - extract values by position
-            if len(selection_bounds) < 5:
-                print("DEBUG: No selection found, creating default circle mask")
-                return self._create_simple_mask(width, height)
-
-            # Extract from the returned tuple/named tuple
-            has_selection = selection_bounds[0]
-            x1 = selection_bounds[2] if len(selection_bounds) > 2 else 0
-            y1 = selection_bounds[3] if len(selection_bounds) > 3 else 0
-            x2 = selection_bounds[4] if len(selection_bounds) > 4 else 0
-            y2 = selection_bounds[5] if len(selection_bounds) > 5 else 0
-
-            if not has_selection:
-                print("DEBUG: No selection found, creating default circle mask")
-                return self._create_simple_mask(width, height)
-
-            print(f"DEBUG: Selection bounds: ({x1},{y1}) to ({x2},{y2})")
-
-            # Get original image dimensions for scaling
-            orig_width = image.get_width()
-            orig_height = image.get_height()
-
-            # Calculate scaling factors
-            scale_x = width / orig_width
-            scale_y = height / orig_height
-
-            # Scale selection bounds to match mask dimensions
-            scaled_x1 = int(x1 * scale_x)
-            scaled_y1 = int(y1 * scale_y)
-            scaled_x2 = int(x2 * scale_x)
-            scaled_y2 = int(y2 * scale_y)
-
-            print(
-                f"DEBUG: Scaled selection: ({scaled_x1},{scaled_y1}) to ({scaled_x2},{scaled_y2})"
-            )
-
-            # Create IHDR chunk data (RGBA format for transparency)
-            ihdr_data = (
-                width.to_bytes(4, "big")
-                + height.to_bytes(4, "big")
-                + b"\x08\x06\x00\x00\x00"  # 8-bit RGBA format
-            )
-
-            import zlib
-
-            ihdr_crc = zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF
-
-            # Create image data with transparent selection area
-            image_rows = []
-            for y in range(height):
-                row = b"\x00"  # Filter byte
-                for x in range(width):
-                    if scaled_x1 <= x <= scaled_x2 and scaled_y1 <= y <= scaled_y2:
-                        # Transparent (inpaint this area) - RGBA: (0, 0, 0, 0)
-                        row += b"\x00\x00\x00\x00"
-                    else:
-                        # White opaque (preserve this area) - RGBA: (255, 255, 255, 255)
-                        row += b"\xff\xff\xff\xff"
-                image_rows.append(row)
-
-            image_data = b"".join(image_rows)
-            compressed_data = zlib.compress(image_data)
-            idat_crc = zlib.crc32(b"IDAT" + compressed_data) & 0xFFFFFFFF
-
-            # Build PNG
-            png_data = (
-                b"\x89PNG\r\n\x1a\n"
-                + len(ihdr_data).to_bytes(4, "big")
-                + b"IHDR"
-                + ihdr_data
-                + ihdr_crc.to_bytes(4, "big")
-                + len(compressed_data).to_bytes(4, "big")
-                + b"IDAT"
-                + compressed_data
-                + idat_crc.to_bytes(4, "big")
-                + b"\x00\x00\x00\x00IEND\xae B`\x82"
-            )
-
-            print(f"DEBUG: Created selection-based mask PNG: {len(png_data)} bytes")
-            return png_data
-
-        except Exception as e:
-            print(f"DEBUG: Failed to create selection mask: {e}")
-            return self._create_simple_mask(width, height)
-
     def _create_multipart_data(self, fields, files):
         """Create multipart form data for file upload - supports image arrays"""
         import email.mime.multipart
@@ -3255,7 +2801,13 @@ class GimpAIPlugin(Gimp.PlugIn):
         return body, boundary
 
     def _call_openai_edit(
-        self, image_data, mask_data, prompt, api_key, size="1024x1024", progress_label=None
+        self,
+        image_data,
+        mask_data,
+        prompt,
+        api_key,
+        size="1024x1024",
+        progress_label=None,
     ):
         """Call OpenAI GPT-Image-1 API for image editing (supports single image or array)"""
         try:
@@ -3352,9 +2904,7 @@ class GimpAIPlugin(Gimp.PlugIn):
 
                     # Create debug file for inspection (same as single mode)
                     if self._is_debug_mode():
-                        debug_filename = (
-                            f"/tmp/gpt-image-1_array_image_{i}_{len(layer_bytes)}_bytes.png"
-                        )
+                        debug_filename = f"/tmp/gpt-image-1_array_image_{i}_{len(layer_bytes)}_bytes.png"
                         with open(debug_filename, "wb") as debug_file:
                             debug_file.write(layer_bytes)
                         print(f"DEBUG: Saved array image {i} to {debug_filename}")
@@ -3558,7 +3108,9 @@ class GimpAIPlugin(Gimp.PlugIn):
             with self._make_url_request(req, timeout=120) as response:
                 # More progress during data reading
                 if progress_label:
-                    self._update_dual_progress(progress_label, "Processing AI response...", 0.7)
+                    self._update_dual_progress(
+                        progress_label, "Processing AI response...", 0.7
+                    )
                 else:
                     Gimp.progress_set_text("Processing AI response...")
                     Gimp.progress_update(0.7)  # 70% - Reading response
@@ -3566,7 +3118,9 @@ class GimpAIPlugin(Gimp.PlugIn):
                 response_data = response.read().decode("utf-8")
 
                 if progress_label:
-                    self._update_dual_progress(progress_label, "Parsing AI result...", 0.75)
+                    self._update_dual_progress(
+                        progress_label, "Parsing AI result...", 0.75
+                    )
                 else:
                     Gimp.progress_set_text("Parsing AI result...")
                     Gimp.progress_update(0.75)  # 75% - Parsing JSON
@@ -3586,68 +3140,79 @@ class GimpAIPlugin(Gimp.PlugIn):
             return False, f"GPT-Image-1 API call failed: {str(e)}", None
 
     def _call_openai_edit_threaded(
-        self, image_data, mask_data, prompt, api_key, size="1024x1024", progress_label=None
+        self,
+        image_data,
+        mask_data,
+        prompt,
+        api_key,
+        size="1024x1024",
+        progress_label=None,
     ):
         """Threaded wrapper for OpenAI API call to keep UI responsive"""
         import threading
         import time
-        
+
         print("DEBUG: Starting threaded OpenAI API call...")
-        
+
         # Shared storage for results and progress label for timeout updates
-        result = {'success': False, 'message': '', 'response': None, 'completed': False}
-        
+        result = {"success": False, "message": "", "response": None, "completed": False}
+
         def network_thread():
             try:
                 # Call the existing blocking function with progress label
                 success, message, response = self._call_openai_edit(
                     image_data, mask_data, prompt, api_key, size, progress_label
                 )
-                result['success'] = success
-                result['message'] = message
-                result['response'] = response
+                result["success"] = success
+                result["message"] = message
+                result["response"] = response
             except Exception as e:
                 print(f"DEBUG: Network thread exception: {e}")
-                result['success'] = False
-                result['message'] = str(e)
-                result['response'] = None
+                result["success"] = False
+                result["message"] = str(e)
+                result["response"] = None
             finally:
-                result['completed'] = True
-        
+                result["completed"] = True
+
         # Start thread
         thread = threading.Thread(target=network_thread)
         thread.daemon = True
         thread.start()
-        
+
         # Keep UI responsive while waiting
         max_wait_time = 300  # 5 minutes maximum wait
         start_time = time.time()
         last_update_time = start_time
-        
-        while not result['completed']:
+
+        while not result["completed"]:
             current_time = time.time()
             elapsed = current_time - start_time
-            
+
             # Check for cancellation
             if self._check_cancel_and_process_events():
                 print("DEBUG: API operation cancelled by user")
                 if progress_label:
                     self._update_progress(progress_label, "❌ Operation cancelled")
-                result['success'] = False
-                result['message'] = "Operation cancelled by user"
-                result['response'] = None
+                result["success"] = False
+                result["message"] = "Operation cancelled by user"
+                result["response"] = None
                 break
-            
+
             # Check for timeout
             if elapsed > max_wait_time:
                 print(f"DEBUG: Thread timeout after {max_wait_time} seconds")
                 if progress_label:
-                    self._update_progress(progress_label, "❌ Request timed out - check internet connection")
-                result['success'] = False
-                result['message'] = "Request timed out - please check your internet connection"
-                result['response'] = None
+                    self._update_progress(
+                        progress_label,
+                        "❌ Request timed out - check internet connection",
+                    )
+                result["success"] = False
+                result["message"] = (
+                    "Request timed out - please check your internet connection"
+                )
+                result["response"] = None
                 break
-            
+
             # Update progress message every 30 seconds for slow connections
             if current_time - last_update_time > 30:
                 minutes_elapsed = int(elapsed // 60)
@@ -3656,16 +3221,16 @@ class GimpAIPlugin(Gimp.PlugIn):
                     if progress_label:
                         self._update_progress(progress_label, slow_message)
                 last_update_time = current_time
-                
+
             # Process GTK events to keep UI responsive
             while Gtk.events_pending():
                 Gtk.main_iteration()
             # Small sleep to prevent CPU spinning
             time.sleep(0.01)
-        
+
         # Thread completed, return results
         print(f"DEBUG: Threaded API call completed: success={result['success']}")
-        return result['success'], result['message'], result['response']
+        return result["success"], result["message"], result["response"]
 
     def _download_and_composite_result(
         self, image, api_response, context_info, mode, color_info=None
@@ -3732,7 +3297,9 @@ class GimpAIPlugin(Gimp.PlugIn):
                 debug_filename = f"/tmp/gpt-image-1_result_{len(image_data)}_bytes.png"
                 with open(debug_filename, "wb") as debug_file:
                     debug_file.write(image_data)
-                print(f"DEBUG: Saved GPT-Image-1 result to {debug_filename} for inspection")
+                print(
+                    f"DEBUG: Saved GPT-Image-1 result to {debug_filename} for inspection"
+                )
 
             try:
                 # Load the AI result into a temporary image
@@ -3992,200 +3559,6 @@ class GimpAIPlugin(Gimp.PlugIn):
             print(f"DEBUG: Download and composite failed: {e}")
             return False, f"Failed to download result: {str(e)}"
 
-    def _download_and_import_result(self, image, api_response):
-        """Download AI result image and import it as a new layer"""
-        try:
-            # Validate inputs
-            if not image:
-                return False, "Error: No GIMP image provided"
-
-            if not api_response or "data" not in api_response:
-                return False, "Invalid API response - no data"
-
-            if not api_response["data"] or len(api_response["data"]) == 0:
-                return False, "Invalid API response - empty data array"
-
-            result_data = api_response["data"][0]
-
-            # Handle both URL and base64 response formats
-            if "url" in result_data:
-                # URL format (DALL-E 2 style)
-                image_url = result_data["url"]
-                print(f"DEBUG: Downloading result from: {image_url}")
-
-                # Download from URL
-                req = urllib.request.Request(image_url)
-                req.add_header("User-Agent", "GIMP-AI-Plugin/1.0")
-                with self._make_url_request(req, timeout=60) as response:
-                    image_data = response.read()
-
-            elif "b64_json" in result_data:
-                # Base64 format (GPT-Image-1 style)
-                print("DEBUG: Processing base64 image data from GPT-Image-1")
-
-                # Decode base64 data
-                import base64
-
-                image_data = base64.b64decode(result_data["b64_json"])
-
-            else:
-                return False, "Invalid API response - no image URL or base64 data"
-
-            print(f"DEBUG: Processed {len(image_data)} bytes")
-
-            # Save to temporary file
-            Gimp.progress_set_text("Saving temporary file...")
-            Gimp.progress_update(0.9)  # 90% - Saving file
-
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
-                temp_filename = temp_file.name
-                temp_file.write(image_data)
-
-            # Also save a copy for debugging
-            if self._is_debug_mode():
-                debug_filename = f"/tmp/gpt-image-1_result_{len(image_data)}_bytes.png"
-                with open(debug_filename, "wb") as debug_file:
-                    debug_file.write(image_data)
-                print(f"DEBUG: Saved GPT-Image-1 result to {debug_filename} for inspection")
-
-            try:
-                # Load the image into GIMP
-                Gimp.progress_set_text("Loading image into GIMP...")
-                Gimp.progress_update(0.95)  # 95% - Loading into GIMP
-
-                file = Gio.File.new_for_path(temp_filename)
-                new_layer = None  # Initialize to ensure it's defined
-
-                # Try to load the image
-                try:
-                    # Load the image file first, then extract layer content
-                    print("DEBUG: Loading image file to extract layer content")
-
-                    # First load the image file into a temporary image
-                    temp_img = Gimp.file_load(
-                        run_mode=Gimp.RunMode.NONINTERACTIVE, file=file
-                    )
-
-                    if temp_img:
-                        temp_layers = temp_img.get_layers()
-
-                        if temp_layers and len(temp_layers) > 0:
-                            # Get the first layer from the loaded image
-                            source_layer = temp_layers[0]
-                            print(
-                                f"DEBUG: Source layer dimensions: {source_layer.get_width()}x{source_layer.get_height()}"
-                            )
-
-                            # Create a new layer from the loaded layer content
-                            Gimp.progress_set_text("Creating new layer...")
-
-                            new_layer = Gimp.Layer.new_from_drawable(
-                                source_layer, image
-                            )
-                            new_layer.set_name("AI Inpaint Result")
-
-                            # Insert the layer into the target image (at the top)
-                            image.insert_layer(new_layer, None, 0)
-
-                            # Clean up the temporary image
-                            temp_img.delete()
-                            print("DEBUG: Successfully created layer from loaded image")
-                        else:
-                            print("DEBUG: No layers found in loaded image")
-                            new_layer = None
-                    else:
-                        print(f"DEBUG: Failed to load image file")
-                        new_layer = None
-
-                    # If we successfully created a layer, configure it
-                    if new_layer is not None:
-                        # Make sure the layer is visible and properly positioned
-                        new_layer.set_visible(True)
-                        new_layer.set_opacity(100.0)
-                        new_layer.set_offsets(0, 0)  # Position at top-left
-
-                        # Get layer details for debugging
-                        layer_width = new_layer.get_width()
-                        layer_height = new_layer.get_height()
-                        layer_visible = new_layer.get_visible()
-                        layer_opacity = new_layer.get_opacity()
-                        offsets = new_layer.get_offsets()
-                        layer_x, layer_y = (
-                            offsets[1],
-                            offsets[2],
-                        )  # Skip the first boolean result
-
-                        print(
-                            f"DEBUG: Successfully loaded AI result as layer using PDB procedure"
-                        )
-                        print(
-                            f"DEBUG: Layer details - dimensions: {layer_width}x{layer_height}, visible: {layer_visible}, opacity: {layer_opacity}, position: ({layer_x}, {layer_y})"
-                        )
-
-                        # Force GIMP to update the display
-                        Gimp.displays_flush()
-
-                        # Check if layer is actually in the image
-                        all_layers = image.get_layers()
-                        layer_found = new_layer in all_layers
-                        print(f"DEBUG: Layer found in image layers list: {layer_found}")
-                        print(f"DEBUG: Total layers in image: {len(all_layers)}")
-
-                        # List all layer names for debugging
-                        for i, layer in enumerate(all_layers):
-                            print(
-                                f"DEBUG: Layer {i}: '{layer.get_name()}', visible: {layer.get_visible()}"
-                            )
-
-                    # If we don't have a layer by now, create fallback
-                    if new_layer is None:
-                        print(f"DEBUG: PDB file-load-layer failed, creating fallback")
-                        # Fallback: create a red test layer
-                        new_layer = Gimp.Layer.new(
-                            image,
-                            "AI Inpaint Result (fallback)",
-                            512,
-                            512,
-                            Gimp.ImageType.RGBA_IMAGE,
-                            100.0,
-                            Gimp.LayerMode.NORMAL,
-                        )
-                        image.insert_layer(new_layer, None, 0)
-                        # Fill with red
-                        from gi.repository import Gegl
-
-                        buffer = new_layer.get_buffer()
-                        rect = Gegl.Rectangle.new(0, 0, 512, 512)
-                        color = Gegl.Color.new("red")
-                        buffer.set_color(rect, color)
-                        new_layer.set_visible(True)
-                        Gimp.displays_flush()
-                        print("DEBUG: Created red fallback layer")
-
-                    # Clean up temp file
-                    os.unlink(temp_filename)
-
-                    layer_count = len(image.get_layers())
-                    print(f"DEBUG: Total layers in image now: {layer_count}")
-
-                    return (
-                        True,
-                        f"AI result imported as new layer: '{new_layer.get_name()}' (total layers: {layer_count})",
-                    )
-
-                except Exception as e:
-                    print(f"DEBUG: GIMP file_load exception: {e}")
-                    return False, f"Failed to load result: {str(e)}"
-
-            finally:
-                # Clean up temp file if it still exists
-                if os.path.exists(temp_filename):
-                    os.unlink(temp_filename)
-
-        except Exception as e:
-            print(f"DEBUG: Download and import failed: {e}")
-            return False, f"Failed to download result: {str(e)}"
-
     def do_query_procedures(self):
         return [
             "gimp-ai-inpaint",
@@ -4268,15 +3641,18 @@ class GimpAIPlugin(Gimp.PlugIn):
                 Gimp.message(
                     "❌ No OpenAI API key found!\n\nPlease set your API key in:\n- config.json file\n- OPENAI_API_KEY environment variable"
                 )
-                return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
+                return procedure.new_return_values(
+                    Gimp.PDBStatusType.CANCEL, GLib.Error()
+                )
 
             # Create progress callback for thread-to-UI communication
             def progress_callback(message):
                 def update_ui():
                     self._update_progress(progress_label, message)
                     return False
+
                 GLib.idle_add(update_ui)
-            
+
             # Do GIMP operations on main thread, only thread the API call
             mode = self._get_processing_mode(selected_mode)
             print(f"DEBUG: Using processing mode: {mode}")
@@ -4297,18 +3673,28 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             # Sample boundary colors for contextual mode (before inpainting)
             color_info = None
-            if mode == "contextual" and context_info and context_info.get("has_selection", False):
+            if (
+                mode == "contextual"
+                and context_info
+                and context_info.get("has_selection", False)
+            ):
                 print("DEBUG: Sampling boundary colors for color matching...")
                 color_info = self._sample_boundary_colors(image, context_info)
 
             # Extract context region with padding (works for both modes)
             print("DEBUG: Extracting context region...")
-            success, message, image_data = self._extract_context_region(image, context_info)
+            success, message, image_data = self._extract_context_region(
+                image, context_info
+            )
             if not success:
-                self._update_progress(progress_label, f"❌ Context extraction failed: {message}")
+                self._update_progress(
+                    progress_label, f"❌ Context extraction failed: {message}"
+                )
                 Gimp.message(f"❌ Context Extraction Failed: {message}")
                 print(f"DEBUG: Context extraction failed: {message}")
-                return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
+                return procedure.new_return_values(
+                    Gimp.PDBStatusType.CANCEL, GLib.Error()
+                )
             print(f"DEBUG: Context extraction succeeded: {message}")
 
             self._update_progress(progress_label, "🎭 Creating selection mask...")
@@ -4318,8 +3704,10 @@ class GimpAIPlugin(Gimp.PlugIn):
             if not context_info:
                 self._update_progress(progress_label, "❌ Context info not available")
                 Gimp.message("❌ Context info not available")
-                return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
-                
+                return procedure.new_return_values(
+                    Gimp.PDBStatusType.CANCEL, GLib.Error()
+                )
+
             mask_data = self._create_context_mask(
                 image, context_info, context_info["target_size"]
             )
@@ -4338,9 +3726,14 @@ class GimpAIPlugin(Gimp.PlugIn):
                 api_size = "1024x1024"  # Default
 
             print(f"DEBUG: Using OpenAI API size: {api_size}")
-            
+
             api_success, api_message, api_response = self._call_openai_edit_threaded(
-                image_data, mask_data, prompt, api_key, size=api_size, progress_label=progress_label
+                image_data,
+                mask_data,
+                prompt,
+                api_key,
+                size=api_size,
+                progress_label=progress_label,
             )
 
             if api_success:
@@ -4356,7 +3749,9 @@ class GimpAIPlugin(Gimp.PlugIn):
                     self._update_progress(progress_label, "✅ AI Inpaint Complete!")
                     print(f"DEBUG: AI Inpaint Complete - {import_message}")
                 else:
-                    self._update_progress(progress_label, f"⚠️ Import Failed: {import_message}")
+                    self._update_progress(
+                        progress_label, f"⚠️ Import Failed: {import_message}"
+                    )
                     Gimp.message(
                         f"⚠️ AI Generated but Import Failed!\n\nPrompt: {prompt}\nAPI: {api_message}\nImport Error: {import_message}"
                     )
@@ -4364,10 +3759,14 @@ class GimpAIPlugin(Gimp.PlugIn):
             else:
                 # Check if this was a cancellation vs actual API failure
                 if "cancelled" in api_message.lower():
-                    self._update_progress(progress_label, "❌ Operation cancelled by user")
+                    self._update_progress(
+                        progress_label, "❌ Operation cancelled by user"
+                    )
                     Gimp.message("❌ Operation cancelled by user")
                 else:
-                    self._update_progress(progress_label, f"❌ AI API Failed: {api_message}")
+                    self._update_progress(
+                        progress_label, f"❌ AI API Failed: {api_message}"
+                    )
                     Gimp.message(f"❌ AI API Failed: {api_message}")
                 print(f"DEBUG: AI API failed: {api_message}")
 
@@ -4407,22 +3806,30 @@ class GimpAIPlugin(Gimp.PlugIn):
                 Gimp.message(
                     "❌ No OpenAI API key found!\n\nPlease set your API key in:\n- config.json file\n- OPENAI_API_KEY environment variable"
                 )
-                return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
+                return procedure.new_return_values(
+                    Gimp.PDBStatusType.CANCEL, GLib.Error()
+                )
 
             # Use existing layer preparation method
             self._update_progress(progress_label, "🔧 Preparing layers...")
             print("DEBUG: Preparing layers for composite...")
-            
+
             # Reverse layer order so base layer (last in dialog list) is first for API
             layers_for_api = list(reversed(selected_layers))
-            
+
             # Use the existing preparation method
-            success, message, layer_data_list, optimal_shape = self._prepare_layers_for_composite(layers_for_api)
+            success, message, layer_data_list, optimal_shape = (
+                self._prepare_layers_for_composite(layers_for_api)
+            )
             if not success:
-                self._update_progress(progress_label, f"❌ Layer preparation failed: {message}")
+                self._update_progress(
+                    progress_label, f"❌ Layer preparation failed: {message}"
+                )
                 Gimp.message(f"❌ Layer Preparation Failed: {message}")
                 print(f"DEBUG: Layer preparation failed: {message}")
-                return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
+                return procedure.new_return_values(
+                    Gimp.PDBStatusType.CANCEL, GLib.Error()
+                )
 
             print(f"DEBUG: Layer preparation succeeded: {message}")
             self._update_progress(progress_label, "Creating mask...")
@@ -4437,7 +3844,9 @@ class GimpAIPlugin(Gimp.PlugIn):
                     # Use existing mask creation logic with optimal dimensions
                     target_width, target_height = optimal_shape
                     mask_data = self._create_simple_mask(target_width, target_height)
-                    print(f"DEBUG: Created mask for composite {target_width}x{target_height}")
+                    print(
+                        f"DEBUG: Created mask for composite {target_width}x{target_height}"
+                    )
                 else:
                     print("DEBUG: No selection found, skipping mask")
 
@@ -4446,10 +3855,17 @@ class GimpAIPlugin(Gimp.PlugIn):
             # Call OpenAI API with layer array using optimal shape
             target_width, target_height = optimal_shape
             api_size = f"{target_width}x{target_height}"
-            print(f"DEBUG: Calling OpenAI API with {len(layer_data_list)} layers, size={api_size}...")
-            
+            print(
+                f"DEBUG: Calling OpenAI API with {len(layer_data_list)} layers, size={api_size}..."
+            )
+
             api_success, api_message, api_response = self._call_openai_edit_threaded(
-                layer_data_list, mask_data, prompt, api_key, size=api_size, progress_label=progress_label
+                layer_data_list,
+                mask_data,
+                prompt,
+                api_key,
+                size=api_size,
+                progress_label=progress_label,
             )
 
             if api_success:
@@ -4457,7 +3873,11 @@ class GimpAIPlugin(Gimp.PlugIn):
                 self._update_progress(progress_label, "Processing AI response...")
 
                 # Create result layer in GIMP
-                if api_response and "data" in api_response and len(api_response["data"]) > 0:
+                if (
+                    api_response
+                    and "data" in api_response
+                    and len(api_response["data"]) > 0
+                ):
                     result_data = api_response["data"][0]
 
                     # Handle both URL and base64 response formats
@@ -4466,19 +3886,26 @@ class GimpAIPlugin(Gimp.PlugIn):
                         print("DEBUG: Processing base64 composite result...")
                         import base64
 
-                        print(f"DEBUG: Decoding base64 data (length: {len(result_data['b64_json'])})")
+                        print(
+                            f"DEBUG: Decoding base64 data (length: {len(result_data['b64_json'])})"
+                        )
                         image_bytes = base64.b64decode(result_data["b64_json"])
                         print(f"DEBUG: Decoded to {len(image_bytes)} bytes")
 
                         # Use the same proven method as image generator
-                        print("DEBUG: Creating layer from decoded data using _add_layer_from_data...")
+                        print(
+                            "DEBUG: Creating layer from decoded data using _add_layer_from_data..."
+                        )
                         success = self._add_layer_from_data(image, image_bytes)
                         if success:
                             # Rename the layer to indicate it's a composite
                             new_layer = image.get_layers()[0]
                             new_layer.set_name("Layer Composite")
 
-                            self._update_progress(progress_label, "✅ Layer Composite completed successfully!")
+                            self._update_progress(
+                                progress_label,
+                                "✅ Layer Composite completed successfully!",
+                            )
                             Gimp.message("✅ Layer Composite completed successfully!")
                             print("DEBUG: Layer composite creation successful")
                         else:
@@ -4506,17 +3933,23 @@ class GimpAIPlugin(Gimp.PlugIn):
                         else:
                             raise Exception("Failed to create image from result data")
                     else:
-                        raise Exception("No image data (b64_json or url) in API response")
+                        raise Exception(
+                            "No image data (b64_json or url) in API response"
+                        )
                 else:
                     self._update_progress(progress_label, "❌ No data in API response")
                     Gimp.message("❌ No data in API response")
             else:
                 # Check if this was a cancellation vs actual API failure
                 if "cancelled" in api_message.lower():
-                    self._update_progress(progress_label, "❌ Operation cancelled by user")
+                    self._update_progress(
+                        progress_label, "❌ Operation cancelled by user"
+                    )
                     Gimp.message("❌ Operation cancelled by user")
                 else:
-                    self._update_progress(progress_label, f"❌ AI API Failed: {api_message}")
+                    self._update_progress(
+                        progress_label, f"❌ AI API Failed: {api_message}"
+                    )
                     Gimp.message(f"❌ AI API Failed: {api_message}")
                 print(f"DEBUG: AI API failed: {api_message}")
 
@@ -4526,227 +3959,6 @@ class GimpAIPlugin(Gimp.PlugIn):
             # Always destroy the dialog
             if dialog:
                 dialog.destroy()
-
-    def _run_inpaint_threaded(self, image, mode, prompt, api_key, progress_callback):
-        """Fully threaded inpainting function with progress callbacks"""
-        import threading
-        import time
-        
-        # Result storage
-        result = {'success': False, 'message': '', 'completed': False}
-        
-        def inpaint_thread():
-            try:
-                # Step 1: Determine processing mode and prepare accordingly
-                progress_callback("🔍 Processing image...")
-                print(f"DEBUG: [THREAD] Using processing mode: {mode}")
-
-                if mode == "full_image":
-                    # Full image path: Use existing context extraction but base on full image
-                    print("DEBUG: [THREAD] Calculating full-image context extraction...")
-                    context_info = self._calculate_full_image_context_extraction(image)
-                elif mode == "contextual":
-                    # Contextual path: Context extraction around selection area only
-                    print("DEBUG: [THREAD] Calculating contextual selection-based extraction...")
-                    context_info = self._calculate_context_extraction(image)
-                else:
-                    # Fallback to contextual for unknown modes
-                    print("DEBUG: [THREAD] Unknown mode, defaulting to contextual extraction...")
-                    context_info = self._calculate_context_extraction(image)
-
-                progress_callback("🔍 Analyzing image context...")
-
-                # Step 2: Sample boundary colors for contextual mode (before inpainting)
-                color_info = None
-                if mode == "contextual" and context_info and context_info.get("has_selection", False):
-                    print("DEBUG: [THREAD] Sampling boundary colors for color matching...")
-                    color_info = self._sample_boundary_colors(image, context_info)
-
-                # Step 3: Extract context region with padding (works for both modes)
-                print("DEBUG: [THREAD] Extracting context region...")
-                progress_callback("🖼️ Extracting context region...")
-                success, message, image_data = self._extract_context_region(image, context_info)
-                if not success:
-                    result['success'] = False
-                    result['message'] = f"Context extraction failed: {message}"
-                    result['completed'] = True
-                    return
-                print(f"DEBUG: [THREAD] Context extraction succeeded: {message}")
-
-                progress_callback("🎭 Creating selection mask...")
-
-                # Step 4: Create smart mask that respects selection within context
-                print("DEBUG: [THREAD] Creating context-aware mask...")
-                if not context_info:
-                    result['success'] = False
-                    result['message'] = "Context info not available"
-                    result['completed'] = True
-                    return
-                    
-                mask_data = self._create_context_mask(
-                    image, context_info, context_info["target_size"]
-                )
-
-                progress_callback("🚀 Starting AI processing...")
-
-                # Step 5: Call AI API with context and mask
-                # Determine the optimal size for OpenAI API
-                if context_info and "target_shape" in context_info:
-                    target_w, target_h = context_info["target_shape"]
-                    api_size = f"{target_w}x{target_h}"
-                elif context_info and "target_size" in context_info:
-                    # Fallback to square for old format
-                    size = context_info["target_size"]
-                    api_size = f"{size}x{size}"
-                else:
-                    api_size = "1024x1024"  # Default
-
-                print(f"DEBUG: [THREAD] Using OpenAI API size: {api_size}")
-                
-                api_success, api_message, api_response = self._call_openai_edit_threaded(
-                    image_data, mask_data, prompt, api_key, size=api_size, progress_label=None
-                )
-
-                if api_success:
-                    print(f"DEBUG: [THREAD] AI API succeeded: {api_message}")
-                    progress_callback("✅ Processing AI response...")
-
-                    # Step 6: Download and composite result with proper masking
-                    import_success, import_message = self._download_and_composite_result(
-                        image, api_response, context_info, mode, color_info
-                    )
-
-                    if import_success:
-                        result['success'] = True
-                        result['message'] = "AI Inpaint completed successfully!"
-                        progress_callback("✅ AI Inpaint Complete!")
-                        print(f"DEBUG: [THREAD] AI Inpaint Complete - {import_message}")
-                    else:
-                        result['success'] = False
-                        result['message'] = f"Import failed: {import_message}"
-                        progress_callback(f"⚠️ Import Failed: {import_message}")
-                        print(f"DEBUG: [THREAD] Import failed: {import_message}")
-                else:
-                    # Check if this was a cancellation vs actual API failure
-                    if "cancelled" in api_message.lower():
-                        result['success'] = False
-                        result['message'] = "Operation cancelled by user"
-                        progress_callback("❌ Operation cancelled by user")
-                    else:
-                        result['success'] = False
-                        result['message'] = f"AI API Failed: {api_message}"
-                        progress_callback(f"❌ AI API Failed: {api_message}")
-                    print(f"DEBUG: [THREAD] AI API failed: {api_message}")
-                
-                result['completed'] = True
-                
-            except Exception as e:
-                result['success'] = False
-                result['message'] = f"Error: {str(e)}"
-                result['completed'] = True
-                progress_callback(f"❌ Error: {str(e)}")
-                print(f"DEBUG: [THREAD] Exception: {str(e)}")
-        
-        # Start the thread
-        thread = threading.Thread(target=inpaint_thread)
-        thread.daemon = True
-        thread.start()
-        
-        return result, thread
-
-    def _run_layer_composite_threaded(self, image, selected_layers, use_mask, prompt, api_key, progress_callback):
-        """Fully threaded layer composite function with progress callbacks"""
-        import threading
-        import time
-        
-        # Result storage
-        result = {'success': False, 'message': '', 'completed': False}
-        
-        def composite_thread():
-            try:
-                # Step 1: Layer preparation
-                progress_callback("🔧 Preparing layers...")
-                print("DEBUG: [THREAD] Preparing layers for composite...")
-                
-                # Reverse layer order so base layer (last in dialog list) is first for API
-                layers_for_api = list(reversed(selected_layers))
-                success, message, layer_data_list, optimal_shape = (
-                    self._prepare_layers_for_composite(layers_for_api)
-                )
-                
-                if not success:
-                    result['success'] = False
-                    result['message'] = f"Layer preparation failed: {message}"
-                    result['completed'] = True
-                    return
-                
-                print(f"DEBUG: [THREAD] Layer preparation succeeded: {message}")
-                
-                # Step 2: Mask creation
-                progress_callback("🎭 Creating mask...")
-                print("DEBUG: [THREAD] Preparing mask...")
-                
-                mask_data = None
-                if use_mask:
-                    # Create mask based on selection for the primary layer
-                    selection_bounds = Gimp.Selection.bounds(image)
-                    if len(selection_bounds) >= 5 and selection_bounds[0]:
-                        target_width, target_height = optimal_shape
-                        mask_data = self._create_simple_mask(target_width, target_height)
-                        print(f"DEBUG: [THREAD] Created mask for composite {target_width}x{target_height}")
-                    else:
-                        print("DEBUG: [THREAD] No selection found, skipping mask")
-                
-                # Step 3: API call
-                progress_callback("🚀 Calling AI API...")
-                print("DEBUG: [THREAD] Starting AI API call...")
-                
-                target_width, target_height = optimal_shape
-                api_size = f"{target_width}x{target_height}"
-                
-                api_success, api_message, api_response = self._call_openai_edit_threaded(
-                    layer_data_list, mask_data, prompt, api_key, size=api_size, progress_label=None
-                )
-                
-                if api_success:
-                    progress_callback("✅ Creating composite layer...")
-                    print(f"DEBUG: [THREAD] AI API succeeded: {api_message}")
-                    
-                    # Process the result
-                    if api_response and "data" in api_response and len(api_response["data"]) > 0:
-                        result_data = api_response["data"][0]
-                        
-                        if "b64_json" in result_data:
-                            print("DEBUG: [THREAD] Decoding base64 data...")
-                            image_bytes = base64.b64decode(result_data["b64_json"])
-                            
-                            # Create the layer - this needs to be done on main thread
-                            result['success'] = True
-                            result['message'] = "Layer composite completed successfully!"
-                            result['image_data'] = image_bytes
-                        else:
-                            result['success'] = False
-                            result['message'] = "No image data in API response"
-                    else:
-                        result['success'] = False
-                        result['message'] = "No data in API response"
-                else:
-                    result['success'] = False
-                    result['message'] = api_message
-                
-            except Exception as e:
-                print(f"DEBUG: [THREAD] Exception in composite thread: {e}")
-                result['success'] = False
-                result['message'] = f"Thread error: {str(e)}"
-            finally:
-                result['completed'] = True
-        
-        # Start the thread
-        thread = threading.Thread(target=composite_thread)
-        thread.daemon = True
-        thread.start()
-        
-        return result, thread
 
     def _create_image_from_data(self, image_data):
         """Helper function to create GIMP image from binary data"""
@@ -4776,106 +3988,18 @@ class GimpAIPlugin(Gimp.PlugIn):
             print(f"DEBUG: Failed to create image from data: {e}")
             return None
 
-    def _generate_gpt_image_layer(self, image, prompt, api_key, size="auto", progress_label=None):
-        """Generate a new layer using GPT-Image-1"""
-        try:
-            import json
-            import urllib.request
-
-            # GPT-Image-1 API endpoint
-            url = "https://api.openai.com/v1/images/generations"
-
-            # Determine optimal size based on image dimensions or user preference
-            if size == "auto":
-                img_width = image.get_width()
-                img_height = image.get_height()
-                aspect_ratio = img_width / img_height
-
-                if aspect_ratio > 1.2:  # Landscape
-                    optimal_size = "1536x1024"
-                elif aspect_ratio < 0.83:  # Portrait
-                    optimal_size = "1024x1536"
-                else:  # Square or close to square
-                    optimal_size = "1024x1024"
-            else:
-                optimal_size = size
-
-            print(f"DEBUG: Using size {optimal_size} for generation")
-
-            # Prepare the request data
-            data = {
-                "model": "gpt-image-1",
-                "prompt": prompt,
-                "n": 1,
-                "size": optimal_size,
-                "quality": "high",
-            }
-
-            # Create the request
-            json_data = json.dumps(data).encode("utf-8")
-
-            req = urllib.request.Request(url, data=json_data)
-            req.add_header("Content-Type", "application/json")
-            req.add_header("Authorization", f"Bearer {api_key}")
-
-            print(f"DEBUG: Calling GPT-Image-1 API with prompt: {prompt}")
-
-            # Make the API call with progress updates using the threaded pattern
-            if progress_label:
-                self._update_progress(progress_label, "🚀 Sending request to GPT-Image-1...")
-            
-            print("DEBUG: Sending real GPT-Image-1 generation request...")
-            with self._make_url_request(req, timeout=180) as response:
-                response_data = json.loads(response.read().decode("utf-8"))
-                
-            if progress_label:
-                self._update_progress(progress_label, "✅ Processing AI response...")
-
-            print(f"DEBUG: GPT-Image-1 API response received")
-
-            # Extract the image data (base64 for GPT-Image-1)
-            if "data" in response_data and len(response_data["data"]) > 0:
-                result_data = response_data["data"][0]
-
-                # Handle base64 response format (GPT-Image-1)
-                if "b64_json" in result_data:
-                    print("DEBUG: Processing base64 image data from GPT-Image-1")
-
-                    # Decode base64 data
-                    import base64
-
-                    image_data = base64.b64decode(result_data["b64_json"])
-                    print(f"DEBUG: Decoded {len(image_data)} bytes of image data")
-
-                    # Process and add the image as a new layer
-                    return self._add_layer_from_data(image, image_data)
-
-                elif "url" in result_data:
-                    # Fallback for URL format (DALL-E 2/3 style)
-                    image_url = result_data["url"]
-                    print(f"DEBUG: Image URL: {image_url}")
-                    return self._download_and_add_layer(image, image_url)
-                else:
-                    print("ERROR: No base64 data or URL in API response")
-                    return False
-            else:
-                print("ERROR: No image data in API response")
-                return False
-
-        except Exception as e:
-            print(f"ERROR: GPT-Image-1 API call failed: {str(e)}")
-            return False
-
-    def _generate_gpt_image_layer_threaded(self, image, prompt, api_key, size="auto", progress_label=None):
+    def _generate_gpt_image_layer_threaded(
+        self, image, prompt, api_key, size="auto", progress_label=None
+    ):
         """Threaded wrapper for GPT image generation to keep UI responsive"""
         import threading
         import time
-        
+
         print("DEBUG: Starting threaded GPT-Image-1 generation...")
-        
+
         # Shared storage for results
-        result = {'success': False, 'completed': False}
-        
+        result = {"success": False, "completed": False}
+
         def generation_thread():
             try:
                 # Call the blocking API directly with progress updates
@@ -4918,11 +4042,14 @@ class GimpAIPlugin(Gimp.PlugIn):
 
                 print("DEBUG: [THREAD] Sending GPT-Image-1 generation request...")
                 if progress_label:
+
                     def update_progress(msg):
                         def update_ui():
                             self._update_progress(progress_label, msg)
                             return False
+
                         GLib.idle_add(update_ui)
+
                     update_progress("🚀 Sending request to GPT-Image-1...")
 
                 # Send request
@@ -4932,99 +4059,113 @@ class GimpAIPlugin(Gimp.PlugIn):
                 # Parse response
                 response_json = json.loads(response_data)
                 print("DEBUG: [THREAD] GPT-Image-1 API response received")
-                
+
                 if progress_label:
                     update_progress("✅ Processing AI response...")
 
                 # Process the response
                 if "data" in response_json and len(response_json["data"]) > 0:
                     result_data = response_json["data"][0]
-                    
+
                     if "b64_json" in result_data:
-                        print("DEBUG: [THREAD] Processing base64 image data from GPT-Image-1")
+                        print(
+                            "DEBUG: [THREAD] Processing base64 image data from GPT-Image-1"
+                        )
                         import base64
+
                         image_data = base64.b64decode(result_data["b64_json"])
-                        print(f"DEBUG: [THREAD] Decoded {len(image_data)} bytes of image data")
-                        
+                        print(
+                            f"DEBUG: [THREAD] Decoded {len(image_data)} bytes of image data"
+                        )
+
                         # Create layer on main thread via GLib.idle_add
-                        layer_created = {'success': False}
-                        
+                        layer_created = {"success": False}
+
                         def create_layer():
                             try:
                                 success = self._add_layer_from_data(image, image_data)
-                                layer_created['success'] = success
+                                layer_created["success"] = success
                                 return False
                             except Exception as e:
                                 print(f"ERROR: [MAIN] Failed to create layer: {e}")
-                                layer_created['success'] = False
+                                layer_created["success"] = False
                                 return False
-                        
+
                         GLib.idle_add(create_layer)
-                        
+
                         # Wait for layer creation to complete
                         import time
-                        while 'success' not in layer_created:
+
+                        while "success" not in layer_created:
                             time.sleep(0.01)
-                        
-                        result['success'] = layer_created['success']
+
+                        result["success"] = layer_created["success"]
                     else:
                         print("ERROR: [THREAD] No b64_json in GPT-Image-1 response")
-                        result['success'] = False
+                        result["success"] = False
                 else:
                     print("ERROR: [THREAD] No data in GPT-Image-1 response")
-                    result['success'] = False
-                    
+                    result["success"] = False
+
             except Exception as e:
                 print(f"ERROR: [THREAD] Image generation failed: {e}")
-                result['success'] = False
+                result["success"] = False
             finally:
-                result['completed'] = True
-        
+                result["completed"] = True
+
         # Start thread
         thread = threading.Thread(target=generation_thread)
         thread.daemon = True
         thread.start()
-        
+
         # Keep UI responsive while waiting
         max_wait_time = 400  # 6.7 minutes maximum wait (longer for image generation)
         start_time = time.time()
         last_update_time = start_time
-        
-        while not result['completed']:
+
+        while not result["completed"]:
             current_time = time.time()
             elapsed = current_time - start_time
-            
+
             # Update progress every 10 seconds
             if progress_label and current_time - last_update_time > 10:
                 minutes = int(elapsed // 60)
                 if minutes > 0:
-                    self._update_progress(progress_label, f"🎨 Still generating... ({minutes}m elapsed)")
+                    self._update_progress(
+                        progress_label, f"🎨 Still generating... ({minutes}m elapsed)"
+                    )
                 else:
                     self._update_progress(progress_label, "🎨 Generating image...")
                 last_update_time = current_time
-            
+
             # Check for cancellation
             if self._check_cancel_and_process_events():
                 print("DEBUG: Image generation cancelled by user")
                 if progress_label:
-                    self._update_progress(progress_label, "❌ Generation cancelled by user")
-                result['success'] = False
+                    self._update_progress(
+                        progress_label, "❌ Generation cancelled by user"
+                    )
+                result["success"] = False
                 break
-            
-            # Check for timeout  
+
+            # Check for timeout
             if elapsed > max_wait_time:
-                print(f"DEBUG: Image generation thread timeout after {max_wait_time} seconds")
+                print(
+                    f"DEBUG: Image generation thread timeout after {max_wait_time} seconds"
+                )
                 if progress_label:
                     self._update_progress(progress_label, "❌ Generation timed out")
-                result['success'] = False
+                result["success"] = False
                 break
-            
-            # Small sleep to prevent CPU spinning  
+
+            # Small sleep to prevent CPU spinning
             time.sleep(0.1)
-        
+
         # Thread completed, return results
-        print(f"DEBUG: Threaded image generation completed: success={result['success']}")
-        return result['success']
+        print(
+            f"DEBUG: Threaded image generation completed: success={result['success']}"
+        )
+        return result["success"]
 
     def _add_layer_from_data(self, image, image_data):
         """Add image from raw data as a new layer"""
@@ -5133,7 +4274,9 @@ class GimpAIPlugin(Gimp.PlugIn):
             return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
 
         # Extract dialog, progress_label, prompt and mode from dialog result
-        dialog, progress_label, prompt, _ = dialog_result  # Ignore mode for layer generator
+        dialog, progress_label, prompt, _ = (
+            dialog_result  # Ignore mode for layer generator
+        )
 
         try:
             # Get API key (should be available since dialog handles API key checking)
@@ -5150,8 +4293,10 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             # Use threaded generation to keep UI responsive like other functions
             self._update_progress(progress_label, "🚀 Starting image generation...")
-            
-            success, message, image_data = self._call_openai_generation_threaded(prompt, api_key, size="auto", progress_label=progress_label)
+
+            success, message, image_data = self._call_openai_generation_threaded(
+                prompt, api_key, size="auto", progress_label=progress_label
+            )
             if success and image_data:
                 # Create layer from the generated image data
                 layer_success = self._add_layer_from_data(image, image_data)
@@ -5162,11 +4307,15 @@ class GimpAIPlugin(Gimp.PlugIn):
                     self._update_progress(progress_label, "❌ Operation cancelled")
                     Gimp.message("❌ Operation cancelled by user")
                 else:
-                    self._update_progress(progress_label, f"❌ Generation failed: {message}")
+                    self._update_progress(
+                        progress_label, f"❌ Generation failed: {message}"
+                    )
                     Gimp.message(f"❌ Generation failed: {message}")
                 result = False
             if result:
-                self._update_progress(progress_label, "✅ GPT-Image-1 layer generated successfully!")
+                self._update_progress(
+                    progress_label, "✅ GPT-Image-1 layer generated successfully!"
+                )
                 Gimp.message("✅ GPT-Image-1 layer generated successfully!")
                 return procedure.new_return_values(
                     Gimp.PDBStatusType.SUCCESS, GLib.Error()
@@ -5179,7 +4328,9 @@ class GimpAIPlugin(Gimp.PlugIn):
                         Gimp.PDBStatusType.SUCCESS, GLib.Error()
                     )
                 else:
-                    self._update_progress(progress_label, "❌ Failed to generate GPT-Image-1 layer")
+                    self._update_progress(
+                        progress_label, "❌ Failed to generate GPT-Image-1 layer"
+                    )
                     Gimp.message("❌ Failed to generate GPT-Image-1 layer")
                     return procedure.new_return_values(
                         Gimp.PDBStatusType.EXECUTION_ERROR, GLib.Error()
