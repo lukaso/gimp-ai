@@ -32,7 +32,10 @@
       "Read(/private/tmp/**)",
       "Read(/tmp/**)",
       "Read(/tmp/**)",
-      "Read(/tmp/**)"
+      "Read(/tmp/**)",
+      "Read(/Applications/GIMP.app/Contents/Resources/lib/**)",
+      "WebFetch(domain:stackoverflow.com)",
+      "WebFetch(domain:pypi.org)"
     ],
     "deny": [],
     "ask": []
