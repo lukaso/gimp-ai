@@ -14,7 +14,7 @@ Before starting, make sure you have:
 2. ✅ **An OpenAI API key** (get one at [platform.openai.com](https://platform.openai.com))
 3. ✅ **Internet connection** for downloading files and using AI features
 
-> **Note**: This plugin is **beta software** and currently only works with GIMP 3.0.4+ or 3.1.x
+> **Important**: This plugin requires **GIMP 3.0.4 or newer**. Earlier versions are not compatible. The automated installer will detect all compatible GIMP versions and let you choose which to install to.
 
 ---
 
@@ -23,6 +23,7 @@ Before starting, make sure you have:
 The installation process is simple:
 
 **EASIEST METHOD (Recommended for beginners):**
+
 1. Download the release ZIP
 2. Extract it
 3. Run: `python3 install_plugin.py`
@@ -31,6 +32,7 @@ The installation process is simple:
 **The automated installer does everything for you!**
 
 **MANUAL METHOD:**
+
 1. Download 2 files
 2. Create a folder in GIMP's plugin directory
 3. Copy the files to that folder
@@ -59,6 +61,8 @@ You need **exactly 2 files**:
    ```
 5. Follow the on-screen instructions - it will do everything for you!
 
+> **Multiple GIMP versions installed?** The installer will automatically detect all GIMP 3.X installations and let you choose which one to install to. It defaults to the latest stable version (e.g., 3.0, 3.2 are stable; 3.1, 3.3 are development).
+
 > **Using the automated installer?** You can skip to [Step 7: Configure Your API Key](#-step-7-configure-your-api-key) after running it!
 
 ### Option B: Download from GitHub Release (Manual Install)
@@ -85,46 +89,65 @@ The plugin directory location depends on your operating system.
 
 1. Press `Windows + R` to open the Run dialog
 2. Type `%APPDATA%\GIMP` and press Enter
-3. You should see a folder named `3.0` or `3.1` (depending on your GIMP version)
-4. Open that folder, then open the `plug-ins` folder
+3. You should see one or more folders like `3.0`, `3.1`, `3.2`, etc. (depending on your GIMP version)
+4. Choose your GIMP version folder (use the latest stable version - even numbers like 3.0, 3.2, 3.4)
+5. Open that folder, then open the `plug-ins` folder
 
 **Full path example**: `C:\Users\YourName\AppData\Roaming\GIMP\3.0\plug-ins\`
 
 > **Tip**: If you can't find the `AppData` folder, make sure "Hidden items" is checked in Windows Explorer's View menu.
+> **Multiple versions?** Stable releases use even minor version numbers (3.0, 3.2, 3.4). Development versions use odd numbers (3.1, 3.3).
 
 ### macOS
 
 1. Open Finder
 2. Press `Cmd + Shift + G` (Go to Folder)
-3. Enter: `~/Library/Application Support/GIMP/3.0/plug-ins/` (or `3.1` for GIMP 3.1)
-4. Press Enter
+3. Enter: `~/Library/Application Support/GIMP/`
+4. Press Enter - you'll see folders like `3.0`, `3.1`, `3.2`, etc.
+5. Choose your GIMP version folder (use the latest stable version - even numbers like 3.0, 3.2, 3.4)
+6. Open that folder, then open the `plug-ins` folder
 
-**Full path**: `/Users/YourName/Library/Application Support/GIMP/3.0/plug-ins/`
+**Full path example**: `/Users/YourName/Library/Application Support/GIMP/3.0/plug-ins/`
 
 > **Tip**: If the `Library` folder is hidden, press `Cmd + Shift + .` (period) in Finder to show hidden files.
+> **Multiple versions?** Stable releases use even minor version numbers (3.0, 3.2, 3.4). Development versions use odd numbers (3.1, 3.3).
 
 ### Linux
 
-The plugin directory is at: `~/.config/GIMP/3.0/plug-ins/` (or `3.1`)
+The plugin directory is at: `~/.config/GIMP/<version>/plug-ins/` where `<version>` is your GIMP version (3.0, 3.1, 3.2, etc.)
 
-You can open it in your file manager or terminal:
+First, check which GIMP versions you have:
+
+```bash
+ls ~/.config/GIMP/
+```
+
+Choose your GIMP version (use the latest stable version - even numbers like 3.0, 3.2, 3.4), then navigate to its plug-ins directory:
 
 ```bash
 cd ~/.config/GIMP/3.0/plug-ins/
 ```
 
-**If the directory doesn't exist**, create it:
+**If the directory doesn't exist**, create it (replace `3.0` with your version):
 
 ```bash
 mkdir -p ~/.config/GIMP/3.0/plug-ins/
 ```
+
+> **Multiple versions?** Stable releases use even minor version numbers (3.0, 3.2, 3.4). Development versions use odd numbers (3.1, 3.3).
 
 ### Flatpak GIMP (Linux)
 
 If you installed GIMP via Flatpak, the directory is different:
 
 ```bash
-~/.var/app/org.gimp.GIMP/config/GIMP/3.0/plug-ins/
+~/.var/app/org.gimp.GIMP/config/GIMP/<version>/plug-ins/
+```
+
+Check which versions you have:
+
+```bash
+ls ~/.var/app/org.gimp.GIMP/config/GIMP/
 ```
 
 ---
@@ -147,17 +170,21 @@ plug-ins/
 ### How to Create the Folder
 
 **Windows:**
+
 1. Right-click in the `plug-ins` folder
 2. Select "New" → "Folder"
 3. Name it exactly: `gimp-ai-plugin`
 
 **macOS:**
+
 1. Right-click (or Ctrl+click) in the `plug-ins` folder
 2. Select "New Folder"
 3. Name it exactly: `gimp-ai-plugin`
 
 **Linux:**
+
 ```bash
+# Replace 3.0 with your GIMP version
 mkdir ~/.config/GIMP/3.0/plug-ins/gimp-ai-plugin
 ```
 
@@ -170,10 +197,12 @@ mkdir ~/.config/GIMP/3.0/plug-ins/gimp-ai-plugin
 Now copy **both files** you downloaded into the `gimp-ai-plugin` folder you just created.
 
 ### Where to Copy:
+
 - **From**: Where you downloaded/extracted the files
 - **To**: `plug-ins/gimp-ai-plugin/` (the folder you just created)
 
 ### What to Copy:
+
 - ✅ `gimp-ai-plugin.py`
 - ✅ `coordinate_utils.py`
 
@@ -188,13 +217,24 @@ Both files must be in the same `gimp-ai-plugin` folder!
 On Linux and macOS, you need to make the main plugin file executable:
 
 ### macOS:
+
 ```bash
+# Replace 3.0 with your GIMP version
 chmod +x ~/Library/Application\ Support/GIMP/3.0/plug-ins/gimp-ai-plugin/gimp-ai-plugin.py
 ```
 
 ### Linux:
+
 ```bash
+# Replace 3.0 with your GIMP version
 chmod +x ~/.config/GIMP/3.0/plug-ins/gimp-ai-plugin/gimp-ai-plugin.py
+```
+
+### Flatpak (Linux):
+
+```bash
+# Replace 3.0 with your GIMP version
+chmod +x ~/.var/app/org.gimp.GIMP/config/GIMP/3.0/plug-ins/gimp-ai-plugin/gimp-ai-plugin.py
 ```
 
 ---
@@ -202,6 +242,7 @@ chmod +x ~/.config/GIMP/3.0/plug-ins/gimp-ai-plugin/gimp-ai-plugin.py
 ## 🔄 Step 6: Restart GIMP
 
 If GIMP is currently running:
+
 1. **Save your work**
 2. **Quit GIMP completely** (don't just close windows - actually quit the application)
 3. **Start GIMP again**
@@ -228,11 +269,13 @@ Now you'll set up your OpenAI API key so the plugin can access AI features.
 ### Enter Your API Key in GIMP
 
 **Method 1 (Recommended):**
+
 1. In GIMP, go to `Filters` → `AI` → `Settings`
 2. Paste your API key in the "OpenAI API Key" field
 3. Click OK
 
 **Method 2 (If Settings menu isn't available):**
+
 1. Try any AI feature (e.g., `Filters` → `AI` → `Image Generator`)
 2. You'll see an error dialog about missing API key
 3. Click "Configure" in the error dialog
@@ -279,6 +322,7 @@ Let's verify everything is working:
 3. ✅ **Is the folder named exactly `gimp-ai-plugin`?** (not `gimp_ai_plugin` or `gimp-ai`)
 4. ✅ **Do you have GIMP 3.0.4 or newer?** Check: `Help` → `About GIMP`
 5. ✅ **Linux/macOS: Did you make the file executable?** (Step 5)
+6. ✅ **Are you looking in the right version folder?** (Check the version folder matches your installed GIMP)
 
 ### "No API Key Configured" Error
 
