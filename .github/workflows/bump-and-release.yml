@@ -105,13 +105,15 @@ jobs:
           fi
 
           echo "release_title=$PR_TITLE" >> $GITHUB_OUTPUT
-          BODY="Merged PR: #${{ github.event.pull_request.number }} - ${PR_TITLE}\n\n${PR_BODY}\n\n### Changes\n${CHANGES}"
-          printf '%s' "$BODY" > release_body.txt
-          {
-            echo "release_body<<END_RELEASE_NOTES_DELIMITER_${{ github.run_id }}"
-            cat release_body.txt
-            echo "END_RELEASE_NOTES_DELIMITER_${{ github.run_id }}"
-          } >> $GITHUB_OUTPUT
+          DELIMITER="END_RELEASE_NOTES_DELIMITER_${{ github.run_id }}"
+          echo "release_body<<$DELIMITER" >> $GITHUB_OUTPUT
+          echo "Merged PR: #${{ github.event.pull_request.number }} - ${PR_TITLE}" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "${PR_BODY}" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "### Changes" >> $GITHUB_OUTPUT
+          echo "${CHANGES}" >> $GITHUB_OUTPUT
+          echo "$DELIMITER" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release and upload ZIP
         uses: ncipollo/release-action@v1
@@ -119,7 +121,7 @@ jobs:
           tag: "v${{ steps.bump.outputs.new_version }}"
           name: "v${{ steps.bump.outputs.new_version }}"
           body: ${{ steps.notes.outputs.release_body }}
-          files: dist/*.zip
+          artifacts: "dist/*.zip"
           draft: false
           prerelease: false
           token: ${{ secrets.RELEASE_PUBLISH_TOKEN || github.token }}
