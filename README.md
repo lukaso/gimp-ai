@@ -1,6 +1,6 @@
 # GIMP AI Plugin v0.8 Beta
 
-A Python plugin for GIMP 3.0+ that integrates AI image generation capabilities directly into GIMP. This is a **beta release** seeking testers on all platforms.
+A Python plugin for GIMP 3.0.4+ that integrates AI image generation capabilities directly into GIMP. This is a **beta release** seeking testers on all platforms.
 
 Currently supports **OpenAI's gpt-image-1** models for inpainting and image generation. Future plans include support for additional AI providers.
 
@@ -13,7 +13,7 @@ Currently supports **OpenAI's gpt-image-1** models for inpainting and image gene
 
 ## 📋 Requirements
 
-- **GIMP 3.0.4+ or 3.1.x** (earlier versions not supported)
+- **GIMP 3.0.4 or newer** (all GIMP 3.X versions from 3.0.4 onwards)
 - **Internet connection** for AI API calls
 - **OpenAI API key** (get one at [platform.openai.com](https://platform.openai.com))
 - **Zero external dependencies** - uses only Python standard library + GIMP APIs
@@ -50,10 +50,12 @@ The installation guide includes:
 
 ### Quick Reference
 
-**Plugin folder location by OS:**
+**Plugin folder location by OS** (replace `3.0` with your GIMP version):
 - **Windows**: `%APPDATA%\GIMP\3.0\plug-ins\gimp-ai-plugin\`
 - **macOS**: `~/Library/Application Support/GIMP/3.0/plug-ins/gimp-ai-plugin/`
 - **Linux**: `~/.config/GIMP/3.0/plug-ins/gimp-ai-plugin/`
+
+> **Note**: The automated installer will detect all compatible GIMP versions (3.0.4+) and let you choose which one to install to.
 
 **Required folder structure:**
 ```
