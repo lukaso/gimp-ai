@@ -18,47 +18,64 @@ Currently supports **OpenAI's gpt-image-1** models for inpainting and image gene
 - **OpenAI API key** (get one at [platform.openai.com](https://platform.openai.com))
 - **Zero external dependencies** - uses only Python standard library + GIMP APIs
 
-## 🚀 Quick Installation
+## 🚀 Installation
 
 **Just 2 files to copy!** No external dependencies or complex setup.
 
-### 📁 Find Your GIMP Plugin Directory:
+### Easiest Way: Automated Installer 🎯
 
-- **macOS**: `~/Library/Application Support/GIMP/3.0/plug-ins/` (or 3.1)
-- **Linux**: `~/.config/GIMP/3.0/plug-ins/` (or 3.1)
-- **Windows**: `%APPDATA%\GIMP\3.0\plug-ins\` (or 3.1)
+1. **Download** the [latest release ZIP](https://github.com/lukaso/gimp-ai/releases)
+2. **Extract** the ZIP file
+3. **Run** the installer: `python3 install_plugin.py`
+4. **Restart GIMP** and configure your API key
 
-### 📥 Copy Files:
+Done! The installer handles everything automatically.
 
-1. **Create plugin subdirectory**:
+### Manual Install (3 Simple Steps)
 
-   ```bash
-   # Create the gimp-ai-plugin directory
-   mkdir "~/path/to/plug-ins/gimp-ai-plugin"
-   ```
+1. **Download 2 files**: `gimp-ai-plugin.py` and `coordinate_utils.py`
+2. **Create folder**: Make a `gimp-ai-plugin` folder in your GIMP plug-ins directory
+3. **Copy files**: Put both files in that folder, restart GIMP
 
-2. **Copy both files** to the subdirectory:
+### Need Help? 📖
 
-   - `gimp-ai-plugin.py` → `gimp-ai-plugin/gimp-ai-plugin.py`
-   - `coordinate_utils.py` → `gimp-ai-plugin/coordinate_utils.py`
+**👉 [Read the Complete Installation Guide (INSTALL.md)](INSTALL.md) 👈**
 
-3. **Make executable** (Linux/macOS only):
+The installation guide includes:
+- ✅ Step-by-step instructions for beginners
+- ✅ How to find your GIMP plugin directory on Windows/Mac/Linux
+- ✅ Screenshots and visual examples
+- ✅ How to get and configure your OpenAI API key
+- ✅ Troubleshooting for "Filter → AI not found" issues
 
-   ```bash
-   chmod +x ~/path/to/plug-ins/gimp-ai-plugin/gimp-ai-plugin.py
-   ```
+### Quick Reference
 
-4. **Restart GIMP**
+**Plugin folder location by OS:**
+- **Windows**: `%APPDATA%\GIMP\3.0\plug-ins\gimp-ai-plugin\`
+- **macOS**: `~/Library/Application Support/GIMP/3.0/plug-ins/gimp-ai-plugin/`
+- **Linux**: `~/.config/GIMP/3.0/plug-ins/gimp-ai-plugin/`
 
-### 🎯 Quick Test:
+**Required folder structure:**
+```
+plug-ins/
+└── gimp-ai-plugin/          ← Create this folder
+    ├── gimp-ai-plugin.py    ← Required file #1
+    └── coordinate_utils.py  ← Required file #2
+```
 
-After restart, look for **Filters → AI** in the menu. If you don't see it, check the [troubleshooting guide](TROUBLESHOOTING.md).
+**After copying files:**
+- Linux/macOS: Run `chmod +x gimp-ai-plugin.py` in the folder
+- Restart GIMP completely
+- Look for `Filters → AI` in the menu
 
 ## ⚙️ Configuration
 
-1. **Try any AI feature** - you'll be prompted to configure
-2. **Enter your OpenAI API key** - it's saved automatically
-3. **You're ready to go!**
+1. **Get an OpenAI API key** from [platform.openai.com](https://platform.openai.com)
+2. In GIMP: go to `Filters → AI → Settings`
+3. **Paste your API key** (starts with `sk-`)
+4. Click OK - it's saved automatically!
+
+> **First time?** See [INSTALL.md](INSTALL.md) for detailed API key instructions.
 
 ## 🎨 Usage
 
@@ -119,9 +136,27 @@ After restart, look for **Filters → AI** in the menu. If you don't see it, che
 
 ## 📚 Documentation
 
+- **[INSTALL.md](INSTALL.md)** - Complete installation guide for users
 - **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions
 - **[CHANGELOG.md](CHANGELOG.md)** - What's new and known issues
 - **[TODO.md](TODO.md)** - Development roadmap
+- **[RELEASE.md](RELEASE.md)** - Release process for maintainers
+
+## 🔧 For Developers
+
+### Creating Releases
+
+Releases are automated via GitHub Actions. See **[RELEASE.md](RELEASE.md)** for details.
+
+**Quick overview:**
+- Label PRs with `major`, `minor`, or `patch` for version bumps
+- Merge to `main` triggers automated release creation
+- The workflow builds the package and creates a GitHub release
+
+### Tools
+
+- **`build_release.py`** - Creates distributable ZIP packages (used by workflow)
+- **`tools/bump_version.py`** - Bumps version in `gimp-ai-plugin.py` (used by workflow)
 
 ## ⚖️ License
 

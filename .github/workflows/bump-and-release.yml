@@ -1,0 +1,123 @@
+name: Bump version and create release
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  bump-and-release:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PUBLISH_TOKEN || github.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Determine bump type from PR labels
+        id: bump-label
+        run: |
+          echo "PR labels:"
+          jq -r '.pull_request.labels[].name // empty' "$GITHUB_EVENT_PATH" | sed 's/^/ - /' || true
+
+          LABELS=$(jq -r '.pull_request.labels[].name // empty' "$GITHUB_EVENT_PATH" | tr '\n' ' ')
+          BUMP=minor
+          for l in $LABELS; do
+            L=$(echo "$l" | tr '[:upper:]' '[:lower:]')
+            if [ "$L" = "major" ]; then
+              BUMP=major
+              break
+            fi
+            if [ "$L" = "patch" ]; then
+              BUMP=patch
+            fi
+          done
+          echo "Selected bump type: $BUMP"
+          echo "bump=$BUMP" >> $GITHUB_OUTPUT
+
+      - name: Show current version
+        id: current-version
+        run: |
+          python - <<'PY'
+          import re,sys,pathlib
+          p=pathlib.Path('gimp-ai-plugin.py')
+          if not p.exists():
+              print("file-not-found")
+              sys.exit(0)
+          t=p.read_text()
+          m=re.search(r"VERSION\s*=\s*['\"]([^'\"]+)['\"]", t)
+          print(m.group(1) if m else "unknown")
+          PY
+
+      - name: Bump version file
+        id: bump
+        run: |
+          NEW_VER=$(python tools/bump_version.py --type "${{ steps.bump-label.outputs.bump }}")
+          echo "new_version=$NEW_VER" >> $GITHUB_OUTPUT
+
+      - name: Commit bumped version & create tag
+        env:
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+        run: |
+          git config user.name "$GIT_COMMITTER_NAME"
+          git config user.email "$GIT_COMMITTER_EMAIL"
+
+          NEW="v${{ steps.bump.outputs.new_version }}"
+          echo "Committing bumped version: $NEW"
+          git add gimp-ai-plugin.py
+          git commit -m "chore(release): bump version to $NEW" || echo "No changes to commit"
+          # push commit (origin already has token from checkout)
+          git push origin HEAD:refs/heads/${{ github.event.pull_request.base.ref }}
+
+          # create annotated tag and push
+          git tag -a "$NEW" -m "Release $NEW"
+          git push origin "$NEW"
+
+      - name: Build release package
+        run: |
+          python3 build_release.py
+
+      - name: Prepare release notes
+        id: notes
+        run: |
+          # PR title and body
+          PR_TITLE=$(jq -r '.pull_request.title' "$GITHUB_EVENT_PATH")
+          PR_BODY=$(jq -r '.pull_request.body' "$GITHUB_EVENT_PATH")
+          # commits since last tag (if any)
+          if git describe --tags --abbrev=0 >/dev/null 2>&1; then
+            LAST_TAG=$(git describe --tags --abbrev=0)
+            CHANGES=$(git --no-pager log --pretty=format:"- %s (%h)" "${LAST_TAG}..HEAD")
+          else
+            CHANGES=$(git --no-pager log --pretty=format:"- %s (%h)" HEAD)
+          fi
+
+          echo "release_title=$PR_TITLE" >> $GITHUB_OUTPUT
+          BODY="Merged PR: #${{ github.event.pull_request.number }} - ${PR_TITLE}\n\n${PR_BODY}\n\n### Changes\n${CHANGES}"
+          printf '%s' "$BODY" > release_body.txt
+          echo "release_body<<EOF" >> $GITHUB_OUTPUT
+          cat release_body.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release and upload ZIP
+        uses: ncipollo/release-action@v1
+        with:
+          tag: "v${{ steps.bump.outputs.new_version }}"
+          name: "v${{ steps.bump.outputs.new_version }}"
+          body: ${{ steps.notes.outputs.release_body }}
+          files: dist/*.zip
+          draft: false
+          prerelease: false
+          token: ${{ secrets.RELEASE_PUBLISH_TOKEN || github.token }}
