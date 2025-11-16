@@ -136,9 +136,27 @@ plug-ins/
 
 ## 📚 Documentation
 
+- **[INSTALL.md](INSTALL.md)** - Complete installation guide for users
 - **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions
 - **[CHANGELOG.md](CHANGELOG.md)** - What's new and known issues
 - **[TODO.md](TODO.md)** - Development roadmap
+- **[RELEASE.md](RELEASE.md)** - Release process for maintainers
+
+## 🔧 For Developers
+
+### Creating Releases
+
+Releases are automated via GitHub Actions. See **[RELEASE.md](RELEASE.md)** for details.
+
+**Quick overview:**
+- Label PRs with `major`, `minor`, or `patch` for version bumps
+- Merge to `main` triggers automated release creation
+- The workflow builds the package and creates a GitHub release
+
+### Tools
+
+- **`build_release.py`** - Creates distributable ZIP packages (used by workflow)
+- **`tools/bump_version.py`** - Bumps version in `gimp-ai-plugin.py` (used by workflow)
 
 ## ⚖️ License
 
