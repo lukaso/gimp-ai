@@ -52,7 +52,7 @@ new_core = f"{major}.{minor}.{patch}"
 # Decide whether to preserve prerelease: we drop prerelease by default for a bump
 new_ver = new_core
 
-new_text = re.sub(r"(VERSION\s*=\s*['\"])([^'\"]+)(['\"])", rf"\1{new_ver}\3", text)
+new_text = re.sub(r"(VERSION\s*=\s*['\"])([^'\"]+)(['\"])", lambda m: m.group(1) + new_ver + m.group(3), text)
 p.write_text(new_text, encoding='utf-8')
 
 print(new_ver)

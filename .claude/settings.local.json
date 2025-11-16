@@ -35,7 +35,9 @@
       "Read(/tmp/**)",
       "Read(/Applications/GIMP.app/Contents/Resources/lib/**)",
       "WebFetch(domain:stackoverflow.com)",
-      "WebFetch(domain:pypi.org)"
+      "WebFetch(domain:pypi.org)",
+      "Bash(git log:*)",
+      "Bash(echo:*)"
     ],
     "deny": [],
     "ask": []
