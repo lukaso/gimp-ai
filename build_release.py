@@ -81,7 +81,8 @@ def create_release_package():
         "README.md",
         "LICENSE",
         "TROUBLESHOOTING.md",
-        "CHANGELOG.md"
+        "CHANGELOG.md",
+        "install_plugin.py"  # Include the automated installer
     ]
     
     print("\n📄 Copying documentation...")
@@ -102,8 +103,25 @@ def create_release_package():
 
 Thanks for downloading the GIMP AI Plugin!
 
-INSTALLATION (3 STEPS):
------------------------
+INSTALLATION OPTIONS:
+--------------------
+
+OPTION 1: AUTOMATED INSTALLER (RECOMMENDED)
+-------------------------------------------
+
+Simply run the installer script:
+
+   python3 install_plugin.py
+
+The installer will:
+• Detect your operating system
+• Find your GIMP plugins directory automatically
+• Copy files to the correct location
+• Set proper permissions
+• Show you the next steps
+
+OPTION 2: MANUAL INSTALLATION
+------------------------------
 
 1. LOCATE YOUR GIMP PLUGIN FOLDER:
    
@@ -129,12 +147,20 @@ INSTALLATION (3 STEPS):
    Run this command in a terminal:
    chmod +x ~/.config/GIMP/3.0/plug-ins/gimp-ai-plugin/gimp-ai-plugin.py
 
-4. RESTART GIMP
+AFTER INSTALLATION:
+-------------------
 
-5. CONFIGURE API KEY:
+1. 🔄 RESTART GIMP completely (quit and reopen)
+
+2. 🔑 CONFIGURE API KEY:
    
    In GIMP: Filters → AI → Settings
    Enter your OpenAI API key (from platform.openai.com)
+
+3. 🎨 TEST THE PLUGIN:
+
+   Try: Filters → AI → Image Generator
+   Enter: "blue sky with clouds"
 
 NEED HELP?
 ----------
@@ -193,7 +219,9 @@ Enjoy!
     print(f"\nUsers can:")
     print(f"1. Download {zip_filename}")
     print(f"2. Extract the ZIP file")
-    print(f"3. Copy the 'gimp-ai-plugin' folder to their GIMP plug-ins directory")
+    print(f"3. Run: python3 install_plugin.py (automated)")
+    print(f"   OR")
+    print(f"   Copy the 'gimp-ai-plugin' folder to their GIMP plug-ins directory (manual)")
     print(f"4. Restart GIMP")
     
     return True

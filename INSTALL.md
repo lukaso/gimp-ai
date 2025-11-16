@@ -21,6 +21,16 @@ Before starting, make sure you have:
 ## 🎯 Quick Overview
 
 The installation process is simple:
+
+**EASIEST METHOD (Recommended for beginners):**
+1. Download the release ZIP
+2. Extract it
+3. Run: `python3 install_plugin.py`
+4. Restart GIMP and configure your API key
+
+**The automated installer does everything for you!**
+
+**MANUAL METHOD:**
 1. Download 2 files
 2. Create a folder in GIMP's plugin directory
 3. Copy the files to that folder
@@ -38,13 +48,26 @@ You need **exactly 2 files**:
 1. **`gimp-ai-plugin.py`** - The main plugin file
 2. **`coordinate_utils.py`** - Helper functions (required)
 
-### Option A: Download from GitHub Release (Recommended)
+### Option A: Download Release Package with Automated Installer (Easiest!)
+
+1. Go to the [Releases page](https://github.com/lukaso/gimp-ai/releases)
+2. Download the latest `gimp-ai-plugin-vX.X.X.zip` file
+3. Extract the ZIP file
+4. Run the automated installer:
+   ```bash
+   python3 install_plugin.py
+   ```
+5. Follow the on-screen instructions - it will do everything for you!
+
+> **Using the automated installer?** You can skip to [Step 7: Configure Your API Key](#-step-7-configure-your-api-key) after running it!
+
+### Option B: Download from GitHub Release (Manual Install)
 
 1. Go to the [Releases page](https://github.com/lukaso/gimp-ai/releases)
 2. Download the latest `gimp-ai-plugin-vX.X.X.zip` file
 3. Extract the ZIP file - you'll see a `gimp-ai-plugin` folder containing both files
 
-### Option B: Download Individual Files
+### Option C: Download Individual Files
 
 1. Go to the [GitHub repository](https://github.com/lukaso/gimp-ai)
 2. Click on `gimp-ai-plugin.py` → Click "Raw" → Save the file (Ctrl+S or Cmd+S)

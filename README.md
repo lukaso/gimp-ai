@@ -22,7 +22,16 @@ Currently supports **OpenAI's gpt-image-1** models for inpainting and image gene
 
 **Just 2 files to copy!** No external dependencies or complex setup.
 
-### Quick Install (3 Simple Steps)
+### Easiest Way: Automated Installer 🎯
+
+1. **Download** the [latest release ZIP](https://github.com/lukaso/gimp-ai/releases)
+2. **Extract** the ZIP file
+3. **Run** the installer: `python3 install_plugin.py`
+4. **Restart GIMP** and configure your API key
+
+Done! The installer handles everything automatically.
+
+### Manual Install (3 Simple Steps)
 
 1. **Download 2 files**: `gimp-ai-plugin.py` and `coordinate_utils.py`
 2. **Create folder**: Make a `gimp-ai-plugin` folder in your GIMP plug-ins directory
