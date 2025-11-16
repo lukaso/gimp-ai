@@ -2,6 +2,8 @@
 
 Common issues and solutions for the GIMP AI Plugin.
 
+> **First time installing?** Check the [INSTALL.md](INSTALL.md) guide for complete step-by-step instructions.
+
 ---
 
 ## 🚨 Installation Issues
@@ -12,20 +14,22 @@ Common issues and solutions for the GIMP AI Plugin.
 
 **Solutions**:
 
-1. **Check plugin directory structure**:
+1. **Verify you installed BOTH files** in the correct structure:
+
+   ```
+   plug-ins/
+   └── gimp-ai-plugin/          ← Must be this exact folder name
+       ├── gimp-ai-plugin.py    ← Required file #1
+       └── coordinate_utils.py  ← Required file #2
+   ```
+
+2. **Check plugin directory location for your OS**:
 
    - **macOS**: `~/Library/Application Support/GIMP/3.1/plug-ins/gimp-ai-plugin/` (or 3.0)
    - **Linux**: `~/.config/GIMP/3.1/plug-ins/gimp-ai-plugin/` (or 3.0)
    - **Windows**: `%APPDATA%\GIMP\3.1\plug-ins\gimp-ai-plugin\` (or 3.0)
 
-2. **Verify subdirectory and both files are present**:
-
-   ```
-   plug-ins/
-   └── gimp-ai-plugin/
-       ├── gimp-ai-plugin.py
-       └── coordinate_utils.py
-   ```
+   > **Tip**: See [INSTALL.md](INSTALL.md) for detailed instructions on finding these directories.
 
 3. **Check file permissions** (Linux/macOS):
 
@@ -33,9 +37,13 @@ Common issues and solutions for the GIMP AI Plugin.
    chmod +x ~/path/to/gimp-ai-plugin/gimp-ai-plugin.py
    ```
 
-4. **Restart GIMP completely** (quit and reopen)
+4. **Restart GIMP completely** (quit and reopen, don't just close windows)
 
 5. **Check GIMP version**: Plugin requires GIMP 3.0.4+ or 3.1.x
+   - In GIMP: `Help` → `About GIMP`
+
+6. **Check GIMP Error Console** for any error messages:
+   - In GIMP: `Windows` → `Dockable Dialogs` → `Error Console`
 
 ### Wrong GIMP Version Directory
 
@@ -46,6 +54,18 @@ Common issues and solutions for the GIMP AI Plugin.
 - Open GIMP → Help → About GIMP
 - Use matching directory (3.0 vs 3.1)
 - Install in correct version-specific folder
+
+### Missing coordinate_utils.py File
+
+**Symptoms**: Plugin appears but crashes when used, or error about missing module
+
+**Solution**: You need BOTH files for the plugin to work:
+
+1. Make sure `coordinate_utils.py` is in the same folder as `gimp-ai-plugin.py`
+2. Both files must be in the `gimp-ai-plugin` subdirectory
+3. Download the release ZIP from GitHub to get both files together
+
+> **Tip**: The release ZIP package includes both files in the correct structure. See [INSTALL.md](INSTALL.md) Step 1.
 
 ---
 
