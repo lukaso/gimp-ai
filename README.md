@@ -1,4 +1,4 @@
-# GIMP AI Plugin v0.8 Beta
+# GIMP AI Plugin Beta
 
 A Python plugin for GIMP 3.0.4+ that integrates AI image generation capabilities directly into GIMP. This is a **beta release** seeking testers on all platforms.
 
@@ -42,6 +42,7 @@ Done! The installer handles everything automatically.
 **👉 [Read the Complete Installation Guide (INSTALL.md)](INSTALL.md) 👈**
 
 The installation guide includes:
+
 - ✅ Step-by-step instructions for beginners
 - ✅ How to find your GIMP plugin directory on Windows/Mac/Linux
 - ✅ Screenshots and visual examples
@@ -51,6 +52,7 @@ The installation guide includes:
 ### Quick Reference
 
 **Plugin folder location by OS** (replace `3.0` with your GIMP version):
+
 - **Windows**: `%APPDATA%\GIMP\3.0\plug-ins\gimp-ai-plugin\`
 - **macOS**: `~/Library/Application Support/GIMP/3.0/plug-ins/gimp-ai-plugin/`
 - **Linux**: `~/.config/GIMP/3.0/plug-ins/gimp-ai-plugin/`
@@ -58,6 +60,7 @@ The installation guide includes:
 > **Note**: The automated installer will detect all compatible GIMP versions (3.0.4+) and let you choose which one to install to.
 
 **Required folder structure:**
+
 ```
 plug-ins/
 └── gimp-ai-plugin/          ← Create this folder
@@ -66,6 +69,7 @@ plug-ins/
 ```
 
 **After copying files:**
+
 - Linux/macOS: Run `chmod +x gimp-ai-plugin.py` in the folder
 - Restart GIMP completely
 - Look for `Filters → AI` in the menu
@@ -151,6 +155,7 @@ plug-ins/
 Releases are automated via GitHub Actions. See **[RELEASE.md](RELEASE.md)** for details.
 
 **Quick overview:**
+
 - Label PRs with `major`, `minor`, or `patch` for version bumps
 - Merge to `main` triggers automated release creation
 - The workflow builds the package and creates a GitHub release
