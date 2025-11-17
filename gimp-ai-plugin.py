@@ -380,7 +380,7 @@ class GimpAIPlugin(Gimp.PlugIn):
         return api_warning_bar, True
 
     def _is_debug_mode(self):
-        """Check if debug mode is enabled (saves temp files to /tmp)"""
+        """Check if debug mode is enabled (saves temp files to system temp directory)"""
         # Check config first
         debug = self.config.get("debug_mode", False)
         # Allow environment variable override
@@ -1062,7 +1062,8 @@ class GimpAIPlugin(Gimp.PlugIn):
 
             # Debug mode checkbox
             debug_checkbox = Gtk.CheckButton()
-            debug_checkbox.set_label("Save debug images to /tmp")
+            debug_dir = tempfile.gettempdir()
+            debug_checkbox.set_label(f"Save debug images to {debug_dir}")
             debug_checkbox.set_active(self.config.get("debug_mode", False))
             debug_box.pack_start(debug_checkbox, False, False, 0)
 
@@ -2821,10 +2822,14 @@ class GimpAIPlugin(Gimp.PlugIn):
 
                     # Create debug file for inspection (same as single mode)
                     if self._is_debug_mode():
-                        debug_filename = f"/tmp/gpt-image-1_array_image_{i}_{len(layer_bytes)}_bytes.png"
-                        with open(debug_filename, "wb") as debug_file:
-                            debug_file.write(layer_bytes)
-                        print(f"DEBUG: Saved array image {i} to {debug_filename}")
+                        debug_dir = tempfile.gettempdir()
+                        debug_filename = os.path.join(debug_dir, f"gpt-image-1_array_image_{i}_{len(layer_bytes)}_bytes.png")
+                        try:
+                            with open(debug_filename, "wb") as debug_file:
+                                debug_file.write(layer_bytes)
+                            print(f"DEBUG: Saved array image {i} to {debug_filename}")
+                        except Exception as e:
+                            print(f"DEBUG: Could not save debug file: {e}")
 
                     # Validate PNG format (same as single mode)
                     if layer_bytes.startswith(b"\x89PNG"):
@@ -2860,12 +2865,14 @@ class GimpAIPlugin(Gimp.PlugIn):
                 if mask_data:
                     # Create debug file for mask
                     if self._is_debug_mode():
-                        debug_mask_filename = (
-                            f"/tmp/gpt-image-1_array_mask_{len(mask_data)}_bytes.png"
-                        )
-                        with open(debug_mask_filename, "wb") as debug_file:
-                            debug_file.write(mask_data)
-                        print(f"DEBUG: Saved array mask to {debug_mask_filename}")
+                        debug_dir = tempfile.gettempdir()
+                        debug_mask_filename = os.path.join(debug_dir, f"gpt-image-1_array_mask_{len(mask_data)}_bytes.png")
+                        try:
+                            with open(debug_mask_filename, "wb") as debug_file:
+                                debug_file.write(mask_data)
+                            print(f"DEBUG: Saved array mask to {debug_mask_filename}")
+                        except Exception as e:
+                            print(f"DEBUG: Could not save debug file: {e}")
 
                     # Validate mask format (same as single mode)
                     if mask_data.startswith(b"\x89PNG"):
@@ -2932,19 +2939,22 @@ class GimpAIPlugin(Gimp.PlugIn):
 
                 # Save debug copies of what we're sending to GPT-Image-1
                 if self._is_debug_mode():
-                    debug_input_filename = (
-                        f"/tmp/gpt-image-1_input_{len(image_bytes)}_bytes.png"
-                    )
-                    with open(debug_input_filename, "wb") as debug_file:
-                        debug_file.write(image_bytes)
-                    print(f"DEBUG: Saved input image to {debug_input_filename}")
+                    debug_dir = tempfile.gettempdir()
+                    debug_input_filename = os.path.join(debug_dir, f"gpt-image-1_input_{len(image_bytes)}_bytes.png")
+                    try:
+                        with open(debug_input_filename, "wb") as debug_file:
+                            debug_file.write(image_bytes)
+                        print(f"DEBUG: Saved input image to {debug_input_filename}")
+                    except Exception as e:
+                        print(f"DEBUG: Could not save debug file: {e}")
 
-                    debug_mask_filename = (
-                        f"/tmp/gpt-image-1_mask_{len(mask_data)}_bytes.png"
-                    )
-                    with open(debug_mask_filename, "wb") as debug_file:
-                        debug_file.write(mask_data)
-                    print(f"DEBUG: Saved mask to {debug_mask_filename}")
+                    debug_mask_filename = os.path.join(debug_dir, f"gpt-image-1_mask_{len(mask_data)}_bytes.png")
+                    try:
+                        with open(debug_mask_filename, "wb") as debug_file:
+                            debug_file.write(mask_data)
+                        print(f"DEBUG: Saved mask to {debug_mask_filename}")
+                    except Exception as e:
+                        print(f"DEBUG: Could not save debug file: {e}")
 
                 # Analyze both image formats by examining PNG headers
                 if image_bytes.startswith(b"\x89PNG"):
@@ -3130,18 +3140,22 @@ class GimpAIPlugin(Gimp.PlugIn):
             Gimp.progress_update(0.9)  # 90% - Processing
             Gimp.displays_flush()
 
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False, mode='wb') as temp_file:
                 temp_filename = temp_file.name
                 temp_file.write(image_data)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
 
             # Save debug copy
             if self._is_debug_mode():
-                debug_filename = f"/tmp/gpt-image-1_result_{len(image_data)}_bytes.png"
-                with open(debug_filename, "wb") as debug_file:
-                    debug_file.write(image_data)
-                print(
-                    f"DEBUG: Saved GPT-Image-1 result to {debug_filename} for inspection"
-                )
+                debug_dir = tempfile.gettempdir()
+                debug_filename = os.path.join(debug_dir, f"gpt-image-1_result_{len(image_data)}_bytes.png")
+                try:
+                    with open(debug_filename, "wb") as debug_file:
+                        debug_file.write(image_data)
+                    print(f"DEBUG: Saved GPT-Image-1 result to {debug_filename} for inspection")
+                except Exception as e:
+                    print(f"DEBUG: Could not save debug file: {e}")
 
             try:
                 # Load the AI result into a temporary image
@@ -3889,8 +3903,10 @@ class GimpAIPlugin(Gimp.PlugIn):
             import os
 
             print(f"DEBUG: Writing {len(image_data)} bytes to temp file...")
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False, mode='wb') as temp_file:
                 temp_file.write(image_data)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
                 temp_path = temp_file.name
             print(f"DEBUG: Temp file created: {temp_path}")
 
@@ -4089,8 +4105,10 @@ class GimpAIPlugin(Gimp.PlugIn):
             import os
 
             # Create temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png", mode='wb') as temp_file:
                 temp_file.write(image_data)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
                 temp_file_path = temp_file.name
 
             print(f"DEBUG: Saved image data to: {temp_file_path}")
@@ -4139,8 +4157,10 @@ class GimpAIPlugin(Gimp.PlugIn):
                 image_data = response.read()
 
             # Create temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png", mode='wb') as temp_file:
                 temp_file.write(image_data)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
                 temp_file_path = temp_file.name
 
             print(f"DEBUG: Downloaded image to: {temp_file_path}")
