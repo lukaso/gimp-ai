@@ -5,7 +5,7 @@
 GIMP AI Plugin - Simplified version to fix crash
 """
 
-VERSION = "0.13.0"
+VERSION = "0.14.0"
 
 import sys
 import os
