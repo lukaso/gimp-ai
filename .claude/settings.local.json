@@ -37,7 +37,8 @@
       "WebFetch(domain:stackoverflow.com)",
       "WebFetch(domain:pypi.org)",
       "Bash(git log:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(gh issue view:*)"
     ],
     "deny": [],
     "ask": []

@@ -10,7 +10,6 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from coordinate_utils import (
-    calculate_context_extraction,
     extract_context_with_selection,
     get_optimal_openai_shape,
     validate_context_info
